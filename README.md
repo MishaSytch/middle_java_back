@@ -34,6 +34,19 @@
 
 Основное назначение индексов — **повышение производительности запросов** (особенно `SELECT`, `UPDATE`, `DELETE` с условиями `WHERE`, а также `JOIN` и `ORDER BY`). Без индекса СУБД вынуждена выполнять последовательное сканирование (`Seq Scan`), проверяя каждую строку таблицы, что при больших объёмах данных может быть крайне медленно. Индекс позволяет сократить количество читаемых страниц до O(log n), где n — число строк.
 
+Пример создания индекса и проверки его работы (таблица `orders` из `test.session.sql`):
+
+```sql
+-- Индекс по времени создания заказа (частый фильтр по диапазону)
+CREATE INDEX idx_orders_created_at ON orders (created_at);
+
+-- До индекса: Seq Scan по всей таблице (500 000 строк)
+-- После: Bitmap Index Scan / Index Scan по узкому диапазону
+EXPLAIN ANALYZE
+SELECT id, total_amount
+FROM orders
+WHERE created_at > NOW() - INTERVAL '1 month';
+```
 
 ### 2. Как работает B-tree индекс
 
@@ -55,6 +68,24 @@ B-tree (Balanced tree) — наиболее распространённый т�
 
 Составные индексы полезны, когда запросы часто фильтруют или сортируют по комбинации столбцов. Однако не рекомендуется создавать индексы по более чем 3–4 столбцам, так как они занимают много места и редко бывают полезны, если только рабочая нагрузка не очень специфична.
 
+Пример на таблице `order_items` (фильтр по `order_id` + сортировка по `quantity`):
+
+```sql
+-- Составной индекс: сначала по order_id, затем по quantity
+CREATE INDEX idx_oi_order_qty ON order_items (order_id, quantity);
+
+-- Использует индекс по префиксу (order_id) + сортировка без extra Sort
+SELECT product_id, quantity
+FROM order_items
+WHERE order_id = 1234
+ORDER BY quantity DESC;
+
+-- ❌ Этот запрос НЕ использует idx_oi_order_qty эффективно
+--    (фильтрует только по quantity — не левый префикс)
+SELECT order_id, quantity
+FROM order_items
+WHERE quantity > 5;
+```
 
 ### 4. Когда стоит создавать индекс
 
@@ -84,6 +115,22 @@ B-tree (Balanced tree) — наиболее распространённый т�
 
 Кардинальность тесно связана с **селективностью (selectivity)** — долей строк, удовлетворяющих условию. Чем выше кардинальность, тем выше селективность и тем полезнее индекс для точечных запросов. Индекс по столбцу с низкой кардинальностью (например, `boolean`) часто бесполезен, так как даже при поиске по значению будет возвращена большая часть таблицы, и полное сканирование окажется быстрее. Планировщик запросов использует статистику кардинальности (собираемую через `ANALYZE`) для оценки стоимости различных планов.
 
+Проверить кардинальность и селективность на реальных данных:
+
+```sql
+-- Сколько уникальных значений в столбце (после ANALYZE)
+SELECT count(DISTINCT status) AS unique_statuses,
+       count(*)               AS total_rows,
+       count(DISTINCT status) * 1.0 / count(*) AS selectivity
+FROM orders;
+-- status: 4 уникальных значения из 500 000 строк → selectivity ≈ 0.000008
+-- → индекс по status практически бесполезен (возвращает ~25% таблицы)
+
+-- Сравните со столбцом высокой кардинальности:
+SELECT count(DISTINCT user_id) * 1.0 / count(*) AS user_id_selectivity
+FROM orders;
+-- user_id: почти 100 000 уникальных значений → высокий индекс полезен
+```
 
 ### 7. Какие типы JOIN существуют
 
@@ -95,6 +142,25 @@ B-tree (Balanced tree) — наиболее распространённый т�
 - **`CROSS JOIN`**: возвращает **декартово произведение** двух таблиц (каждая строка одной соединяется с каждой строкой другой).
 - **`SELF JOIN`**: соединение таблицы с самой собой (частный случай, не отдельный синтаксис).
 
+Примеры на таблицах `users` и `orders`:
+
+```sql
+-- INNER JOIN: только пользователи, у которых есть заказы
+SELECT u.username, o.total_amount
+FROM users u
+JOIN orders o ON u.id = o.user_id;
+
+-- LEFT JOIN: все пользователи, включая тех, у кого нет заказов (NULL в orders)
+SELECT u.username, o.total_amount
+FROM users u
+LEFT JOIN orders o ON u.id = o.user_id;
+
+-- CROSS JOIN: декартово произведение (каждый пользователь × каждый заказ)
+-- Используется редко, например для генерации сетки данных
+SELECT u.username, o.id AS order_id
+FROM users u
+CROSS JOIN orders o;
+```
 
 ### 8. В чём разница между INNER JOIN и LEFT JOIN
 
@@ -103,6 +169,22 @@ B-tree (Balanced tree) — наиболее распространённый т�
 
 Ключевое практическое следствие: если в `LEFT JOIN` добавить условие на правую таблицу в `WHERE` (например, `WHERE right_table.column = 'value'`), это фактически превратит `LEFT JOIN` в `INNER JOIN`, так как строки с `NULL` в правой части не пройдут фильтр. Чтобы сохранить семантику `LEFT JOIN`, условия на правую таблицу нужно размещать в секции `ON`, а не `WHERE`.
 
+Демонстрация на `users` / `orders` (найти пользователей, у которых есть заказы со статусом `PAID`, **включая** пользователей без таких заказов):
+
+```sql
+-- ❌ Неправильно: условие в WHERE — превращает LEFT JOIN в INNER JOIN,
+--    пользователи без PAID-заказов пропадут из результата
+SELECT u.username, o.id
+FROM users u
+LEFT JOIN orders o ON u.id = o.user_id
+WHERE o.status = 'PAID';
+
+-- ✅ Правильно: условие на правую таблицу в ON —
+--    пользователи без PAID-заказов останутся (o.id = NULL)
+SELECT u.username, o.id
+FROM users u
+LEFT JOIN orders o ON u.id = o.user_id AND o.status = 'PAID';
+```
 
 ### 9. Что лучше: JOIN или подзапрос
 
@@ -137,6 +219,18 @@ WHERE e.salary > (SELECT AVG(salary) FROM employees WHERE department_id = e.depa
 
 Порядок выполнения: `FROM` → `WHERE` → `GROUP BY` → `HAVING` → `SELECT` → `ORDER BY`. Таким образом, `WHERE` ограничивает набор строк, попадающих в группировку, а `HAVING` — какие группы останутся в результате.
 
+Пример на `orders`: суммарный оборот по категориям, только по оплаченным заказам и только категории с оборотом выше 10 000:
+
+```sql
+SELECT p.category,
+       SUM(oi.price_at_moment * oi.quantity) AS revenue
+FROM order_items oi
+JOIN orders   o ON oi.order_id = o.id
+JOIN products p ON oi.product_id = p.id
+WHERE o.status = 'PAID'                 -- WHERE: фильтрует строки ДО группировки
+GROUP BY p.category
+HAVING SUM(oi.price_at_moment * oi.quantity) > 10000;  -- HAVING: фильтрует группы ПОСЛЕ
+```
 
 ### 12. Что делает GROUP BY
 
@@ -171,6 +265,22 @@ HAVING AVG(salary) > 50000;
 
 Синтаксис: `function_name(...) OVER (PARTITION BY ... ORDER BY ...)`. `PARTITION BY` делит строки на группы (окна), а `ORDER BY` определяет порядок внутри окна. Оконные функции позволяют вычислять ранги, скользящие средние, нарастающие итоги, сравнивать значения с предыдущей/следующей строкой (`LAG`/`LEAD`) и многое другое. Они являются мощным инструментом аналитики, позволяющим избежать сложных самосоединений и подзапросов.
 
+Пример: нарастающий оборот (running total) по дням и средняя сумма заказа за последние 7 дней:
+
+```sql
+SELECT
+    date_trunc('day', created_at) AS day,
+    SUM(total_amount) AS daily_revenue,
+    SUM(SUM(total_amount)) OVER (ORDER BY date_trunc('day', created_at)) AS running_total,
+    AVG(SUM(total_amount)) OVER (
+        ORDER BY date_trunc('day', created_at)
+        ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+    ) AS avg_revenue_7d
+FROM orders
+WHERE status = 'PAID'
+GROUP BY date_trunc('day', created_at)
+ORDER BY day;
+```
 
 ### 15. Что делает ROW_NUMBER()
 
@@ -194,6 +304,24 @@ FROM employees;
 
 `ROW_NUMBER()` всегда даёт уникальные номера без повторов. Выбор функции зависит от бизнес-требований: нужен ли «плотный» рейтинг или с пропусками.
 
+Пример (топ пользователей по сумме заказов, наглядно видно различие рангов при равных значениях):
+
+```sql
+SELECT
+    u.username,
+    SUM(o.total_amount) AS total_spent,
+    ROW_NUMBER()   OVER (ORDER BY SUM(o.total_amount) DESC) AS row_num,
+    RANK()         OVER (ORDER BY SUM(o.total_amount) DESC) AS rank,
+    DENSE_RANK()   OVER (ORDER BY SUM(o.total_amount) DESC) AS dense_rank
+FROM users u
+JOIN orders o ON u.id = o.user_id
+WHERE o.status = 'PAID'
+GROUP BY u.username
+ORDER BY total_spent DESC
+LIMIT 10;
+```
+
+Если у двух пользователей сумма одинакова: `RANK` выдаст `1, 1, 3`, а `DENSE_RANK` — `1, 1, 2`.
 
 ### 17. Как работает MVCC в PostgreSQL
 
@@ -205,6 +333,33 @@ FROM employees;
 
 Главное преимущество MVCC: **чтение никогда не блокирует запись, а запись никогда не блокирует чтение**. Это обеспечивает высокую степень параллелизма и предсказуемое время отклика. Плата за это — необходимость регулярного `VACUUM` для очистки «мёртвых» версий строк.
 
+Демонстрация (две сессии, таблица `orders`):
+
+```sql
+-- Сессия A
+BEGIN;
+SELECT total_amount FROM orders WHERE id = 1;   -- видит, например, 100.00
+-- (ждём, пока Сессия B сделает UPDATE, но тот ещё не закоммитил)
+
+-- Сессия B
+BEGIN;
+UPDATE orders SET total_amount = 999.99 WHERE id = 1;   -- создаёт новую версию, A этого не видит
+-- SELECT в Сессии A всё ещё вернёт 100.00 (snapshot не изменился)
+ROLLBACK;  -- откатываем, чтобы не испортить данные
+
+-- Сессия A
+COMMIT;
+-- После COMMIT в Сессии B и нового BEGIN в A — будет видно 100.00 (откат),
+-- а при COMMIT обновления — 999.99.
+```
+
+Проверить число версий строки до VACUUM:
+
+```sql
+SELECT id, xmin, xmax   -- xmin = xid создателя, xmax = xid удалителя (0, если активна)
+FROM orders
+WHERE id = 1;
+```
 
 ### 18. Что такое VACUUM в PostgreSQL
 
@@ -218,6 +373,24 @@ FROM employees;
 
 `VACUUM` бывает **стандартным** (работает параллельно с другими операциями, но не возвращает место ОС, а только помечает его для повторного использования) и **`VACUUM FULL`** (полностью перестраивает таблицу, возвращает место ОС, но требует эксклюзивной блокировки и работает медленно). Обычно `VACUUM` запускается автоматически демоном **autovacuum**, но может выполняться и вручную.
 
+Замерить эффект на `orders` (таблица с большим числом UPDATE/DELETE):
+
+```sql
+-- До VACUUM: видим «раздутый» размер и количество мёртвых строк
+SELECT
+    relname,
+    pg_size_pretty(pg_total_relation_size(relid)) AS total_size,
+    n_dead_tup,
+    n_live_tup
+FROM pg_stat_user_tables
+WHERE relname = 'orders';
+
+-- Ручной VACUUM (стандартный, без блокировки)
+VACUUM orders;
+
+-- После VACUUM: n_dead_tup → 0, размер может уменьшиться
+-- (но место возвращается в free space внутри файла, не в ОС — для этого нужен VACUUM FULL)
+```
 
 ### 19. Зачем нужен ANALYZE
 
@@ -234,6 +407,33 @@ FROM employees;
 
 Анализ плана — ключевой инструмент оптимизации. Основные показатели: `cost` (оценка стоимости), `rows` (оценка количества строк), `actual time` и `actual rows` (реальные значения). Большое расхождение между оценкой и реальностью часто указывает на устаревшую статистику или проблему с предикатом.
 
+Типичный план запроса «оборот по категориям за месяц» (как в `run.sql`):
+
+```sql
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT p.category, SUM(oi.price_at_moment * oi.quantity) AS revenue
+FROM order_items oi
+JOIN products p ON oi.product_id = p.id
+JOIN orders   o ON oi.order_id = o.id AND o.created_at > NOW() - INTERVAL '1 month'
+GROUP BY p.category;
+```
+
+```text
+Aggregate  (cost=...  rows=5)  (actual time=... rows=5)
+  Group Key: p.category
+  Buffers: shared hit=...
+  ->  Hash Join  (cost=...  rows=...)   -- соединение oi с orders
+        Hash Cond: (oi.order_id = o.id)
+        ->  Seq Scan on order_items oi   -- ⚠️ полное сканирование 1.5M строк
+        ->  Hash
+              ->  Bitmap Heap Scan on orders o   -- ✅ используется индекс idx_orders_created_at
+                    Recheck Cond: (created_at > ...)
+                    ->  Bitmap Index Scan on idx_orders_created_at
+  ->  Hash  ...
+        ->  Seq Scan on products p
+```
+
+На что смотреть: `Seq Scan` по большой таблице (кандидат на индекс), `Hash Cond` / `Merge Cond` (условия соединения), расхождение `rows` (оценка) и `actual rows` (реальность), `Buffers` (I/O нагрузка).
 
 ### 21. Как оптимизировать медленные запросы
 
@@ -250,11 +450,45 @@ FROM employees;
 
 Важно: оптимизация должна быть **измеримой**. Всегда сравнивайте `EXPLAIN ANALYZE` до и после изменений.
 
+Практический пример (запрос из `run.sql`):
+
+```sql
+-- ❌ До: условие на orders в JOIN, индекс по created_at может не помочь
+--    (планировщик соединяет сначала oi × orders по order_id, фильтр по дате — позже)
+EXPLAIN ANALYZE
+SELECT p.category, SUM(oi.price_at_moment * oi.quantity) AS revenue
+FROM order_items oi
+JOIN products p ON oi.product_id = p.id
+JOIN orders   o ON oi.order_id = o.id AND o.created_at > NOW() - INTERVAL '1 month'
+GROUP BY p.category;
+
+-- ✅ После: сначала отфильтровать нужные заказы (CTE), затем соединение —
+--    индекс idx_orders_created_at срабатывает на малом наборе строк
+EXPLAIN ANALYZE
+WITH recent_orders AS MATERIALIZED (
+    SELECT id FROM orders WHERE created_at > NOW() - INTERVAL '1 month'
+)
+SELECT p.category, SUM(oi.price_at_moment * oi.quantity) AS revenue
+FROM order_items oi
+JOIN recent_orders ro ON oi.order_id = ro.id
+JOIN products       p ON oi.product_id = p.id
+GROUP BY p.category;
+```
+
+Плюс: убедиться, что по `order_items (order_id)` есть индекс (`idx4`), чтобы соединение с `recent_orders` шло через `Index/Hash` без полного скана 1.5M строк.
+
 ## 2. Паттерны проектирования
 ### 22. Что такое паттерны проектирования
 
 Паттерны проектирования (design patterns) — это **повторно используемые, проверенные решения** типичных проблем, возникающих при проектировании программного обеспечения. Паттерн не является готовым кодом — это **шаблон, описание подхода**, который можно адаптировать к конкретной задаче. Паттерны помогают разработчикам общаться на общем языке («здесь нужен Strategy»), делают архитектуру более понятной, гибкой и поддерживаемой. Впервые систематизированы «бандой четырёх» (GoF — Gamma, Helm, Johnson, Vlissides) в книге 1994 года.
 
+```mermaid
+flowchart LR
+    P[Паттерн проектирования]
+    P --> C[Порождающие<br/>Creational]
+    P --> S[Структурные<br/>Structural]
+    P --> B[Поведенческие<br/>Behavioral]
+```
 
 ### 23. Какие категории паттернов существуют
 
@@ -265,11 +499,47 @@ FROM employees;
 
 Отдельно выделяют **архитектурные паттерны** (MVC, CQRS, Event Sourcing, Saga) и **антипаттерны**.
 
+```mermaid
+flowchart TB
+    subgraph C[Порождающие]
+        C1[Singleton]
+        C2[Factory Method]
+        C3[Abstract Factory]
+        C4[Builder]
+        C5[Prototype]
+    end
+    subgraph S[Структурные]
+        S1[Adapter]
+        S2[Decorator]
+        S3[Facade]
+        S4[Composite]
+        S5[Proxy]
+        S6[Bridge]
+        S7[Flyweight]
+    end
+    subgraph B[Поведенческие]
+        B1[Strategy]
+        B2[Observer]
+        B3[Command]
+        B4[State]
+        B5[Template Method]
+        B6[Iterator]
+        B7[Chain of Responsibility]
+        B8[Mediator]
+        B9[Visitor]
+        B10[Memento]
+    end
+```
 
 ### 24. Что такое Singleton
 
 **Singleton (Одиночка)** — порождающий паттерн, гарантирующий, что у класса есть **ровно один экземпляр**, и предоставляющий **глобальную точку доступа** к нему. Реализуется через приватный конструктор, статическое поле для хранения экземпляра и статический метод `getInstance()`. Используется для ресурсов, которые должны быть единственными в системе: конфигурации, пулы соединений, кэши, логгеры.
 
+```mermaid
+flowchart LR
+    C[Клиент] -->|getInstance| S[Singleton]
+    S --> I[Единственный экземпляр]
+```
 
 ### 25. Как реализовать потокобезопасный Singleton
 
@@ -280,6 +550,14 @@ FROM employees;
 - **Bill Pugh (holder class)**: статический вложенный класс-держатель — ленивая и потокобезопасная инициализация за счёт гарантий загрузки классов JVM. Один из лучших подходов.
 - **Enum Singleton**: самый надёжный — защищён от рефлексии, сериализации, потокобезопасен «из коробки». Рекомендуется Джошуа Блохом.
 
+```mermaid
+flowchart LR
+    A[Eager initialization] --> S[Потокобезопасный Singleton]
+    B[Synchronized getInstance] --> S
+    C[Double-checked locking с volatile] --> S
+    D[Holder class — Bill Pugh] --> S
+    E[Enum Singleton] --> S
+```
 
 ### 26. Что такое double-checked locking
 
@@ -299,6 +577,16 @@ public static Singleton getInstance() {
 ```
 Первая проверка избегает синхронизации в «горячем» пути, вторая — гонки при инициализации. **Критически важно** поле `volatile`: без него возможна публикация частично сконструированного объекта из-за переупорядочивания инструкций (до Java 5 DCL был сломан).
 
+```mermaid
+flowchart TD
+    A[getInstance] --> B{instance == null?}
+    B -->|нет| R[return instance]
+    B -->|да| C[synchronized Singleton class]
+    C --> D{instance == null?}
+    D -->|нет| R
+    D -->|да| E[создать Singleton]
+    E --> R
+```
 
 ### 27. Каковы проблемы с Singleton
 
@@ -311,6 +599,14 @@ public static Singleton getInstance() {
 
 Современная рекомендация: вместо Singleton использовать **Dependency Injection** — контейнер сам управляет единственным экземпляром, а зависимости явно декларируются.
 
+```mermaid
+flowchart LR
+    G[Глобальное состояние] --> P[Проблемы Singleton]
+    T[Сложность тестирования] --> P
+    S[Nарушение SRP] --> P
+    D[Скрытые зависимости] --> P
+    P --> R[Решение — Dependency Injection]
+```
 
 ### 28. В чём разница между Factory Method и Abstract Factory
 
@@ -319,6 +615,22 @@ public static Singleton getInstance() {
 
 Кратко: Factory Method — «один продукт, наследование», Abstract Factory — «семейство продуктов, композиция». Abstract Factory часто реализуется через несколько Factory Method.
 
+```mermaid
+flowchart TB
+    subgraph FM[Factory Method — один продукт]
+        C[Client] --> A[Product]
+        A --> A1[ConcreteProductA]
+        A --> A2[ConcreteProductB]
+        C -->|new| M[Creator createProduct]
+    end
+    subgraph AF[Abstract Factory — семейство]
+        AC[Client] --> AFa[AbstractFactory]
+        AFa --> F1[createButton]
+        AFa --> F2[createCheckbox]
+        AFa --> CF1[WinFactory]
+        AFa --> CF2[MacFactory]
+    end
+```
 
 ### 29. Когда использовать Builder
 
@@ -331,6 +643,12 @@ public static Singleton getInstance() {
 
 Не стоит использовать Builder для простых объектов с 1–3 полями — это избыточно.
 
+```mermaid
+flowchart LR
+    D[Director] --> B[Builder]
+    B -->|size cheese| P[Pizza]
+    B -->|build| P
+```
 
 ### 30. Что такое Prototype pattern
 
@@ -341,6 +659,11 @@ public static Singleton getInstance() {
 
 Важно различать **shallow copy** (по умолчанию `Object.clone()`) и **deep copy** (требует ручной реализации для вложенных объектов).
 
+```mermaid
+flowchart LR
+    P[Prototype] -->|clone| C1[Копия 1]
+    P -->|clone| C2[Копия 2]
+```
 
 ### 31. Когда использовать Strategy
 
@@ -352,6 +675,13 @@ public static Singleton getInstance() {
 
 Пример: различные стратегии скидок, алгоритмы сортировки, способы оплаты. В Java часто реализуется через интерфейс + несколько реализаций, которые внедряются через конструктор (композиция).
 
+```mermaid
+flowchart LR
+    C[Context] --> S[Strategy]
+    S --> S1[ConcreteStrategyA]
+    S --> S2[ConcreteStrategyB]
+    S --> S3[ConcreteStrategyC]
+```
 
 ### 32. Как реализован Observer в Java
 
@@ -363,6 +693,12 @@ public static Singleton getInstance() {
 
 Суть одна: субъект (subject) хранит коллекцию наблюдателей (observers) и при изменении состояния уведомляет их, вызывая общий метод.
 
+```mermaid
+flowchart LR
+    S[Subject] -->|notify| O1[Observer 1]
+    S -->|notify| O2[Observer 2]
+    S -->|notify| O3[Observer 3]
+```
 
 ### 33. В чём преимущество Decorator перед наследованием
 
@@ -374,6 +710,12 @@ public static Singleton getInstance() {
 
 Классический пример в Java — потоки ввода-вывода: `new BufferedReader(new InputStreamReader(new FileInputStream(...)))`.
 
+```mermaid
+flowchart LR
+    C[Client] --> D2[Decorator B]
+    D2 --> D1[Decorator A]
+    D1 --> C1[ConcreteComponent]
+```
 
 ### 34. В чём разница между State и Strategy
 
@@ -383,6 +725,19 @@ public static Singleton getInstance() {
 
 Кратко: в Strategy переходы управляются извне, в State — изнутри (самими состояниями).
 
+```mermaid
+flowchart TB
+    subgraph STR[Strategy — выбор извне]
+        SC[Client] -->|выбирает| SS[Strategy]
+        SS --> SA[Alg A]
+        SS --> SB[Alg B]
+    end
+    subgraph ST[State — переходы изнутри]
+        CT[Context] --> S1[State A]
+        S1 -->|setState| S2[State B]
+        S2 -->|setState| S3[State C]
+    end
+```
 
 ### 35. Какие типы Proxy существуют
 
@@ -397,6 +752,11 @@ public static Singleton getInstance() {
 
 В Java Proxy реализуется через **JDK Dynamic Proxy** (для интерфейсов) или **CGLIB** (для классов); Spring AOP использует оба механизма.
 
+```mermaid
+flowchart LR
+    C[Client] --> P[Proxy]
+    P --> R[RealSubject]
+```
 
 ### 36. Что такое Iterator pattern
 
@@ -407,6 +767,12 @@ public static Singleton getInstance() {
 
 В Java это интерфейсы `java.util.Iterator` и `java.lang.Iterable`; все коллекции Collection Framework поддерживают итерацию, в том числе через `for-each`.
 
+```mermaid
+flowchart LR
+    C[Client] -->|createIterator| I[Iterator]
+    C -->|hasNext next| I
+    I --> A[Aggregate Collection]
+```
 
 ### 37. Какие антипаттерны вы знаете
 
@@ -424,6 +790,17 @@ public static Singleton getInstance() {
 - **Cargo Cult Programming**: копирование кода/ритуалов без понимания, зачем они нужны.
 - **Shotgun Surgery**: одно изменение требует правок во множестве мест (признак плохой связанности).
 - **Feature Envy**: метод больше интересуется данными другого класса, чем своего.
+
+```mermaid
+flowchart LR
+    AP[Антипаттерн] --> G[God Object]
+    AP --> S[Spaghetti Code]
+    AP --> CP[Copy-Paste]
+    AP --> AN[Anemic Domain Model]
+    AP --> BB[Big Ball of Mud]
+    AP --> SS[Shotgun Surgery]
+    AP --> FE[Feature Envy]
+```
 
 
 
@@ -464,6 +841,20 @@ public static Singleton getInstance() {
 
 Объект становится кандидатом на удаление сборщиком мусора, когда он **больше не достижим** ни по одной цепочке ссылок от **GC roots**. Другими словами, если ни один поток, ни одно статическое поле, ни один JNI-хэндл и т.д. не ссылаются на объект (прямо или косвенно), объект считается «мусором» и может быть собран. Важно, что GC не удаляет объект сразу — он помечает его как недостижимый, и память освобождается при следующем цикле сборки.
 
+```mermaid
+flowchart TD
+    R1[GC root — локальная переменная] -->|ссылка| A[Объект A]
+    R2[GC root — static field] -->|ссылка| B[Объект B]
+    A -->|ссылка| C[Объект C]
+    B -->|ссылка| D[Объект D]
+    X[Объект X — мусор]
+    Y[Объект Y — мусор]
+    C -.-> X
+    D -.-> Y
+```
+
+Объекты A, B, C, D — достижимы и живы. X и Y — недостижимы, кандидаты на сборку.
+
 
 ### 43. Что такое утечка памяти в Java
 
@@ -481,6 +872,41 @@ public static Singleton getInstance() {
 - **Слушатели и колбэки**: зарегистрированные слушатели, которые не удаляются, когда становятся ненужными.
 - **Переопределение `equals()`/`hashCode()` без переопределения `finalize()`** (для кэшей на основе `WeakHashMap`).
 
+```java
+// ❌ Утечка: static-коллекция, в которую добавляют объекты и никогда не удаляют
+public class UserCache {
+    private static final Map<String, User> cache = new HashMap<>();
+    public static void put(String key, User user) { cache.put(key, user); }
+    // нет метода remove, нет ограничения размера
+}
+
+// ❌ Утечка: ThreadLocal в пуле потоков, remove() не вызывается
+public class RequestContext {
+    private static final ThreadLocal<User> current = new ThreadLocal<>();
+    public static void set(User u) { current.set(u); }
+    public static User get() { return current.get(); }
+    // забыли: current.remove() после обработки запроса
+}
+
+// ❌ Утечка: слушатель, который не удаляется
+public class EventService {
+    private final List<Listener> listeners = new ArrayList<>();
+    public void register(Listener l) { listeners.add(l); }
+    // нет unregister — слушатели накапливаются
+}
+
+// ✅ Исправление: WeakHashMap для кэша
+private static final Map<String, User> cache = new WeakHashMap<>();
+// ✅ ThreadLocal: вызывать remove() в finally
+try {
+    current.set(user);
+    // обработка
+} finally {
+    current.remove();
+}
+// ✅ Слушатели: удалять после использования
+listeners.remove(l);
+```
 
 ### 45. Что такое поколения в GC (young, old, metaspace)
 
@@ -489,6 +915,22 @@ public static Singleton getInstance() {
 - **Old Generation (Tenured, старое поколение)**: где хранятся долгоживущие объекты, пережившие несколько циклов young GC.
 
 **Metaspace** — это область памяти (вне кучи, в native memory с Java 8), где хранятся **метаданные классов** (определения классов, методы, константы). До Java 8 эту роль выполнял **PermGen** (Permanent Generation), который был частью кучи.
+
+```mermaid
+flowchart TB
+    subgraph Heap[Heap]
+        subgraph Young[Young Generation]
+            Eden[Eden]
+            S0[Survivor 0]
+            S1[Survivor 1]
+        end
+        Old[Old Generation]
+    end
+    Meta[Metaspace]
+    Eden -->|Minor GC| S0
+    S0 -->|Minor GC| S1
+    S1 -->|TenuringThreshold| Old
+```
 
 
 ### 46. Что такое Young Generation
@@ -540,6 +982,23 @@ public static Singleton getInstance() {
 
 **Stop-the-world (STW)** — это событие в работе JVM, когда **все потоки приложения временно приостанавливаются** для выполнения критических операций сборщика мусора, которые не могут быть выполнены конкурентно (например, начальная маркировка корневых объектов, финальная remark-фаза, перемещение объектов в некоторых сборщиках). Во время STW-паузы приложение «замирает», что напрямую влияет на **задержку (latency)** и **пользовательский опыт**. Цель современных сборщиков (G1, ZGC, Shenandoah) — **минимизировать длительность и частоту STW-пауз**.
 
+```mermaid
+flowchart LR
+    subgraph App[Приложение]
+        T1[Поток 1]
+        T2[Поток 2]
+        T3[Поток N]
+    end
+    GC[GC]
+    T1 -->|пауза| STW[STW pause]
+    T2 -->|пауза| STW
+    T3 -->|пауза| STW
+    GC -->|запускает| STW
+    STW -->|возобновление| T1
+    STW -->|возобновление| T2
+    STW -->|возобновление| T3
+```
+
 
 ### 54. Какие GC минимизируют stop-the-world паузы
 
@@ -557,6 +1016,15 @@ public static Singleton getInstance() {
 - **`-Xmx`** задаёт **максимальный размер кучи** (maximum heap size), до которого куча может расти.
 
 Рекомендуется устанавливать `-Xms` и `-Xmx` **равными**, чтобы избежать динамического изменения размера кучи во время работы приложения, которое может вызывать дополнительные паузы и снижать предсказуемость производительности. Например: `-Xms4g -Xmx4g`.
+
+```bash
+# Пример запуска JVM с фиксированным размером кучи
+java -Xms4g -Xmx4g -XX:+UseG1GC -jar app.jar
+
+# -Xms4g — начальный размер кучи 4 ГБ
+# -Xmx4g — максимальный размер кучи 4 ГБ
+# -XX:+UseG1GC — использовать G1 GC
+```
 
 
 ### 56. Что произойдёт при OutOfMemoryError
@@ -584,6 +1052,19 @@ public static Singleton getInstance() {
 3.  **Heap dump**: снятие снимка кучи (heap dump) в момент подозрения на утечку.
 4.  **Анализ heap dump**: использование инструментов (Eclipse MAT, VisualVM) для поиска объектов, которые занимают много памяти и имеют длинные цепочки ссылок до GC roots. Отчёт **Leak Suspects** в MAT и **Dominator Tree** помогают быстро выявить проблемные объекты.
 
+```bash
+# 1. Получить PID приложения
+jps -l
+
+# 2. Создать heap dump
+jcmd <pid> GC.heap_dump /path/to/heap.hprof
+
+# 3. Анализировать в Eclipse MAT:
+#    - Leak Suspects Report
+#    - Dominator Tree
+#    - Path to GC Roots
+```
+
 
 ### 59. Какие инструменты помогают анализировать память
 
@@ -608,6 +1089,19 @@ public static Singleton getInstance() {
 - **Вручную через `jcmd`** (предпочтительно для Java 9+): `jcmd <pid> GC.heap_dump /path/to/heap.hprof`.
 - **Через VisualVM / JConsole / другие инструменты**: в их UI есть кнопка для создания heap dump.
 
+```bash
+# Автоматически при OOM (в командной строке JVM)
+java -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/path/to/dumps/ -jar app.jar
+
+# Вручную через jcmd (предпочтительно для Java 9+)
+jcmd <pid> GC.heap_dump /path/to/heap.hprof
+
+# Вручную через jmap (устаревший способ)
+jmap -dump:format=b,file=heap.hprof <pid>
+# или только живые объекты (с предварительным GC):
+jmap -dump:live,format=b,file=heap.hprof <pid>
+```
+
 
 ### 62. Что такое GC roots
 
@@ -628,6 +1122,16 @@ public static Singleton getInstance() {
 ### 64. Можно ли вручную вызвать GC
 
 **Да, технически можно** вызвать `System.gc()` или `Runtime.getRuntime().gc()`. Однако это **не гарантирует** немедленного выполнения сборки. JVM может **проигнорировать** вызов или выполнить его не сразу. Спецификация Java не обязывает JVM реагировать на `System.gc()`. Некоторые реализации (например, с флагом `-XX:+DisableExplicitGC`) полностью игнорируют явные вызовы GC.
+
+```java
+// Явный вызов GC (не гарантирует немедленное выполнение)
+System.gc();
+// или
+Runtime.getRuntime().gc();
+
+// Отключить явные вызовы GC
+// java -XX:+DisableExplicitGC -jar app.jar
+```
 
 
 ### 65. Почему не стоит вызывать System.gc()
@@ -934,6 +1438,25 @@ for (String s : list) {
 
 Dependency Injection (DI) — это паттерн проектирования и ключевая концепция Spring, при которой объект не создаёт свои зависимости самостоятельно, а получает их извне (от контейнера Spring). Контейнер IoC (Inversion of Control) управляет созданием бинов и их связыванием, внедряя нужные зависимости в поля, конструктор или сеттеры. Это обеспечивает слабую связанность, упрощает тестирование (зависимости можно подменить моками) и делает код более гибким.
 
+```java
+// ❌ Без DI: объект создаёт свои зависимости сам
+public class OrderService {
+    private final UserRepository userRepo = new UserRepositoryImpl();
+    private final PaymentService paymentService = new PaymentServiceImpl();
+}
+
+// ✅ С DI: зависимости внедряются извне
+@Service
+public class OrderService {
+    private final UserRepository userRepo;
+    private final PaymentService paymentService;
+
+    public OrderService(UserRepository userRepo, PaymentService paymentService) {
+        this.userRepo = userRepo;
+        this.paymentService = paymentService;
+    }
+}
+```
 
 ### 97. В чём разница между constructor, setter и field injection
 
@@ -965,10 +1488,41 @@ Spring официально признаёт только конструктор
 - **`@Bean` в `@Configuration`-классе**: метод, помеченный `@Bean`, возвращает объект, который регистрируется как бин. Позволяет создавать бины для сторонних классов, которые нельзя аннотировать.
 - **XML-конфигурация** (устаревший подход): `<bean id="..." class="..."/>`.
 
+```java
+// Способ 1: Аннотация стереотипа
+@Service
+public class OrderService { ... }
+
+// Способ 2: @Bean в @Configuration
+@Configuration
+public class AppConfig {
+    @Bean
+    public RestTemplate restTemplate() {
+        return new RestTemplate();
+    }
+
+    @Bean
+    public ObjectMapper objectMapper() {
+        return new ObjectMapper()
+            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+    }
+}
+```
+
 
 ### 101. Что такое Bean Lifecycle
 
 **Bean Lifecycle** — это последовательность этапов, которые проходит бин от создания до уничтожения под управлением Spring-контейнера. Spring предоставляет хуки (callback-методы), позволяющие разработчику вмешаться в процесс на определённых стадиях: после создания экземпляра, после внедрения зависимостей, перед уничтожением.
+
+```mermaid
+flowchart TD
+    A[Instantiation] --> B[Dependency Injection]
+    B --> C[BeanPostProcessor.postProcessBeforeInitialization]
+    C --> D[Initialization — @PostConstruct afterPropertiesSet init-method]
+    D --> E[BeanPostProcessor.postProcessAfterInitialization]
+    E --> F[Ready for use]
+    F --> G[Destruction — @PreDestroy destroy destroy-method]
+```
 
 
 ### 102. Какие этапы жизненного цикла Bean
@@ -998,6 +1552,27 @@ Spring официально признаёт только конструктор
 - **`@PreDestroy`**: метод вызывается **перед уничтожением** бина при закрытии контекста. Используется для освобождения ресурсов (закрытия соединений, остановки потоков).
 
 Обе аннотации — стандарт JSR-250, считаются best practice для lifecycle-колбэков в современном Spring.
+
+```java
+@Service
+public class ConnectionPoolService {
+
+    private Pool pool;
+
+    @PostConstruct
+    public void init() {
+        // Вызывается после внедрения зависимостей
+        pool = new Pool(/* параметры из конфигурации */);
+        pool.connect();
+    }
+
+    @PreDestroy
+    public void destroy() {
+        // Вызывается при закрытии контекста
+        pool.close();
+    }
+}
+```
 
 
 ### 105. Что такое scope Bean
@@ -1060,10 +1635,52 @@ Spring создаёт прокси для бина, когда обнаружи�
 
 Разработчик избавляется от ручного управления транзакциями (`begin`, `commit`, `rollback`).
 
+```java
+@Service
+public class OrderService {
+
+    @Transactional
+    public void createOrder(Order order) {
+        // Если метод завершится успешно — commit
+        // Если будет unchecked-исключение — rollback
+        orderRepo.save(order);
+        paymentService.charge(order.getTotal());
+    }
+
+    @Transactional(readOnly = true)
+    public Order findOrder(Long id) {
+        return orderRepo.findById(id).orElseThrow();
+    }
+
+    @Transactional(rollbackFor = CustomException.class)
+    public void updateOrder(Order order) {
+        // Rollback не только при unchecked, но и при CustomException
+        orderRepo.save(order);
+    }
+}
+```
+
 
 ### 113. Почему @Transactional не работает при self-invocation
 
 Spring AOP реализован через **прокси**. Когда метод `A` вызывает метод `B` **того же класса** через `this.B()`, вызов происходит **напрямую у целевого объекта**, минуя прокси. Прокси не участвует, поэтому транзакционная логика (открытие/закрытие транзакции) не применяется — `@Transactional` на методе `B` **игнорируется**. Это одна из самых распространённых причин «неработы» `@Transactional`.
+
+```java
+@Service
+public class OrderService {
+
+    // ❌ Self-invocation: @Transactional не сработает
+    public void createOrder(Order order) {
+        this.saveOrder(order); // Вызов напрямую, минуя прокси
+    }
+
+    @Transactional
+    private void saveOrder(Order order) {
+        // Транзакция НЕ будет открыта!
+        orderRepo.save(order);
+    }
+}
+```
 
 
 ### 114. Как решить проблему с self-invocation
@@ -1075,6 +1692,52 @@ Spring AOP реализован через **прокси**. Когда мето
 4.  **Перейти на AspectJ** (без прокси): режим `@EnableTransactionManagement(mode = AdviceMode.ASPECTJ)` компилирует/загружает аспекты в байт-код, и self-invocation работает.
 
 На практике чаще всего выбирают **разделение на разные бины** как наиболее чистый архитектурный подход.
+
+```java
+// ✅ Решение 1: Разделить на разные бины
+@Service
+public class OrderService {
+
+    private final OrderTransactionService transactionService;
+
+    public OrderService(OrderTransactionService transactionService) {
+        this.transactionService = transactionService;
+    }
+
+    public void createOrder(Order order) {
+        // Вызов через прокси другого бина — @Transactional сработает
+        transactionService.saveOrder(order);
+    }
+}
+
+@Service
+public class OrderTransactionService {
+
+    @Transactional
+    public void saveOrder(Order order) {
+        // Транзакция будет открыта
+        orderRepo.save(order);
+    }
+}
+
+// ✅ Решение 2: Self-injection через @Lazy
+@Service
+public class OrderService {
+
+    @Autowired
+    @Lazy
+    private OrderService self; // Внедряем прокси самого себя
+
+    public void createOrder(Order order) {
+        self.saveOrder(order); // Вызов через прокси
+    }
+
+    @Transactional
+    public void saveOrder(Order order) {
+        orderRepo.save(order);
+    }
+}
+```
 
 
 ### 115. Что такое автоконфигурация в Spring Boot
@@ -1139,6 +1802,38 @@ Spring AOP реализован через **прокси**. Когда мето
 ### 124. Что такое profiles в Spring
 
 **Profiles** — это механизм Spring, позволяющий **логически группировать** определения бинов и конфигурации и **активировать их только в определённых средах** (например, `dev`, `test`, `prod`). Компоненты или конфигурационные классы, помеченные `@Profile("prod")`, регистрируются только тогда, когда профиль `prod` активен. Активные профили задаются через `spring.profiles.active` (в `application.properties`, переменной окружения или аргументе командной строки). Это позволяет иметь разные настройки (URL базы данных, уровни логирования, заглушки внешних сервисов) для разных сред без изменения кода. Поддерживаются выражения: `@Profile({"dev","test"})` (активен любой из), `@Profile("!prod")` (активен, если `prod` не активен).
+
+```java
+// Разные конфигурации для разных сред
+@Profile("dev")
+@Component
+public class DevDataSourceConfig {
+    @Bean
+    public DataSource dataSource() {
+        return DataSourceBuilder.create()
+            .url("jdbc:postgresql://localhost:5432/app_dev")
+            .username("dev")
+            .password("dev")
+            .build();
+    }
+}
+
+@Profile("prod")
+@Component
+public class ProdDataSourceConfig {
+    @Bean
+    public DataSource dataSource() {
+        return DataSourceBuilder.create()
+            .url(System.getenv("DB_URL"))
+            .username(System.getenv("DB_USER"))
+            .password(System.getenv("DB_PASS"))
+            .build();
+    }
+}
+
+// Запуск с активным профилем:
+// java -jar app.jar --spring.profiles.active=dev
+```
 
 
 
@@ -1235,6 +1930,15 @@ REST (Representational State Transfer) — это архитектурный с�
 - **HATEOAS** (опционально): ответы содержат ссылки на связанные действия/ресурсы.
 - **Кэшируемость**, **слоистость**, **клиент-серверное разделение**.
 - **Корректное использование заголовков** (`Content-Type`, `Accept`, `ETag`, `Cache-Control`).
+
+```
+GET    /api/users            → 200 OK
+GET    /api/users/1          → 200 OK
+POST   /api/users            → 201 Created
+PUT    /api/users/1          → 200 OK
+PATCH  /api/users/1          → 200 OK
+DELETE /api/users/1          → 204 No Content
+```
 
 
 ### 136. Как правильно именовать REST endpoints
@@ -1646,6 +2350,36 @@ Stream API (Java 8+) предоставляет декларативный, фу
 
 Параллельные стримы **по умолчанию** выполняются в **`ForkJoinPool.commonPool()`**, размер которого обычно равен `Runtime.getRuntime().availableProcessors() - 1`. Этот же пул используется для асинхронных методов `CompletableFuture` (без явного `Executor`), что создаёт риск взаимного влияния.
 
+```java
+// Использование ForkJoinPool
+ForkJoinPool pool = new ForkJoinPool(4); // 4 потока
+
+// Рекурсивное разбиение задачи
+class SumTask extends RecursiveTask<Long> {
+    private final long[] array;
+    private final int start, end;
+
+    public Long compute() {
+        int length = end - start;
+        if (length < 1000) { // Базовый случай: прямой подсчёт
+            long sum = 0;
+            for (int i = start; i < end; i++) sum += array[i];
+            return sum;
+        }
+        // Рекурсивное разбиение
+        int mid = start + length / 2;
+        SumTask left = new SumTask(array, start, mid);
+        SumTask right = new SumTask(array, mid, end);
+        left.fork(); // Запускаем левую подзадачу
+        long rightResult = right.compute(); // Вычисляем правую
+        long leftResult = left.join(); // Ждём левую
+        return leftResult + rightResult;
+    }
+}
+
+long result = pool.invoke(new SumTask(array, 0, array.length));
+```
+
 
 ### 330 (продолжение). Что такое ForkJoinPool и как он связан с parallel streams? — ответ дан выше.
 
@@ -1901,6 +2635,36 @@ Map<String, Integer> map = stream.collect(
 
 **Deadlock** — это ситуация, при которой **два или более потоков навсегда заблокированы**, ожидая ресурсы (например, блокировки), удерживаемые друг другом. Например, поток T1 удерживает блокировку A и ждёт блокировку B, а поток T2 удерживает B и ждёт A. Ни один из них не может продолжить выполнение, и система «зависает» в этой части.
 
+```java
+// Классический deadlock
+class DeadlockExample {
+    private final Object lockA = new Object();
+    private final Object lockB = new Object();
+
+    public void method1() {
+        synchronized (lockA) {
+            // Удерживает lockA
+            try { Thread.sleep(100); } catch (InterruptedException e) {}
+            synchronized (lockB) {
+                // Ждёт lockB — DEADLOCK!
+            }
+        }
+    }
+
+    public void method2() {
+        synchronized (lockB) {
+            // Удерживает lockB
+            try { Thread.sleep(100); } catch (InterruptedException e) {}
+            synchronized (lockA) {
+                // Ждёт lockA — DEADLOCK!
+            }
+        }
+    }
+}
+
+// Запуск: поток 1 вызывает method1(), поток 2 — method2()
+```
+
 
 ### 217. Какие условия необходимы для возникновения deadlock
 
@@ -1922,6 +2686,36 @@ Map<String, Integer> map = stream.collect(
 ### 219. Что такое race condition
 
 **Race condition (состояние гонки)** — это ситуация, когда корректность программы зависит от **непредсказуемого порядка** доступа нескольких потоков к общим данным. Классический пример — операция `count++` (чтение-изменение-запись): два потока могут одновременно прочитать одно и то же значение, оба увеличить его на 1 и записать обратно, в результате чего одно из обновлений будет потеряно, и итоговое значение окажется меньше ожидаемого.
+
+```java
+// Race condition с count++
+class Counter {
+    private int count = 0; // Не атомарно!
+
+    // ❌ Не потокобезопасно
+    public void increment() {
+        count++; // Читает count, увеличивает на 1, записывает обратно
+                 // Два потока могут одновременно прочитать одно значение
+    }
+
+    public int get() {
+        return count;
+    }
+}
+
+// ✅ Исправление: AtomicInteger
+class SafeCounter {
+    private final AtomicInteger count = new AtomicInteger(0);
+
+    public void increment() {
+        count.incrementAndGet(); // Атомарная операция
+    }
+
+    public int get() {
+        return count.get();
+    }
+}
+```
 
 
 ### 220. Как избежать race condition
@@ -1988,6 +2782,24 @@ Map<String, Integer> map = stream.collect(
 
 `HashMap` внутри представляет собой **массив bucket'ов** (корзин), где каждый элемент массива — это ссылка на связный список (или красно-чёрное дерево) узлов `Node<K,V>`. Каждый узел хранит хеш, ключ, значение и ссылку на следующий узел. При `put()` вычисляется хеш ключа, по нему определяется индекс в массиве, и элемент добавляется в соответствующую корзину. При достижении порога заполнения (`capacity × loadFactor`) происходит **resize (rehashing)** — создается новый массив вдвое большего размера, и все элементы перераспределяются.
 
+```mermaid
+flowchart TD
+    subgraph Table[HashMap table — capacity 16]
+        B0[Bucket 0]
+        B1[Bucket 1]
+        B2[Bucket 2]
+        B3[Bucket 3]
+        B15[Bucket 15]
+    end
+    B0 --> N1[Node — key A hash 1234]
+    N1 --> N2[Node — key B hash 5678]
+    N2 --> N3[Node — key C hash 9012]
+    B1 --> N4[Node — key D hash 3456]
+    B2
+    B3
+    B15
+```
+
 
 ### 228. Что такое bucket (корзина) в HashMap
 
@@ -2043,6 +2855,49 @@ HashMap использует метод **цепочки (chaining)**: все э
 
 Это **нарушает контракт**. Два объекта, которые по вашему `equals()` равны, но имеют разные `hashCode()` (унаследованный от `Object`, основанный на идентичности), попадут в **разные bucket'ы** и никогда не будут найдены как «равные» в `HashMap`/`HashSet`. В результате `get(key)` вернет `null`, а `Set` может содержать «дубликаты», которые с точки зрения `equals()` равны. Это классическая ошибка.
 
+```java
+// ❌ Нарушение контракта: equals() переопределён, hashCode() — нет
+class User {
+    private final String email;
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof User)) return false;
+        return email.equals(((User) o).email);
+    }
+    // hashCode() унаследован от Object — основан на identity!
+
+    public User(String email) {
+        this.email = email;
+    }
+}
+
+// Результат:
+Map<User, String> map = new HashMap<>();
+map.put(new User("a@b.com"), "Alice");
+
+// get() не найдёт объект — разные hash-коды → разные bucket'ы
+System.out.println(map.get(new User("a@b.com"))); // null!
+
+// ✅ Исправление: переопределить и equals(), и hashCode()
+class FixedUser {
+    private final String email;
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof FixedUser)) return false;
+        return email.equals(((FixedUser) o).email);
+    }
+
+    @Override
+    public int hashCode() {
+        return email.hashCode(); // Согласовано с equals()
+    }
+}
+```
+
 
 ### 237. Что произойдёт, если переопределить hashCode() но не переопределить equals()
 
@@ -2075,6 +2930,19 @@ HashMap использует метод **цепочки (chaining)**: все э
 - **Хеш-код кешируется**: вычисляется один раз при первом вызове `hashCode()` и хранится в поле `hash`. Повторные вызовы бесплатны.
 - **Корректные `equals()` и `hashCode()`**: реализованы по контракту (посимвольное сравнение и вычисление хеша по содержимому).
 - **Удобен и читаем** в бизнес-коде (имена, ID, ключи конфигураций).
+
+```java
+// String как ключ в HashMap
+Map<String, Integer> wordCount = new HashMap<>();
+String[] words = {"apple", "banana", "apple", "cherry", "banana", "apple"};
+
+for (String word : words) {
+    wordCount.put(word, wordCount.getOrDefault(word, 0) + 1);
+}
+
+// Результат: {apple=3, banana=2, cherry=1}
+// String иммутабелен → хеш-код стабилен → ключи всегда находятся
+```
 
 
 ### 242. Что такое load factor в HashMap
@@ -2142,6 +3010,20 @@ Rehashing (resize) происходит, когда количество эле�
 
 **Да**, `HashMap` допускает любое количество `null` значений. Это одна из причин, почему `get()` может вернуть `null` — нужно проверять `containsKey()`, чтобы отличить «значение отсутствует» от «значение равно null».
 
+```java
+Map<String, String> map = new HashMap<>();
+map.put("key1", "value1");
+map.put("key2", null); // Допускается
+
+// get() возвращает null в двух случаях:
+System.out.println(map.get("key2"));   // null (значение = null)
+System.out.println(map.get("key3"));   // null (ключ отсутствует)
+
+// Как отличить:
+System.out.println(map.containsKey("key2")); // true (ключ есть, значение = null)
+System.out.println(map.containsKey("key3")); // false (ключа нет)
+```
+
 
 ### 252. В чём разница между HashMap и Hashtable
 
@@ -2160,6 +3042,23 @@ Rehashing (resize) происходит, когда количество эле�
 ### 253. Что такое WeakHashMap
 
 `WeakHashMap` — реализация `Map`, где **ключи хранятся через слабые ссылки (`WeakReference`)**. Если на ключ больше нет сильных ссылок извне, сборщик мусора может его удалить, и соответствующая запись автоматически исчезнет из map. Это полезно для кэшей, где нужно автоматически освобождать память, когда ключ больше не используется. Значения хранятся через обычные (сильные) ссылки, поэтому важно, чтобы значение не ссылалось на ключ (иначе цикл слабая-сильная ссылка не даст ключу быть собранным).
+
+```java
+// WeakHashMap как кэш
+Map<Key, Value> cache = new WeakHashMap<>();
+
+Key key = new Key("data");
+cache.put(key, new Value("cached"));
+
+System.out.println(cache.get(key)); // cached
+
+// Убираем сильную ссылку на ключ
+key = null;
+
+// После GC запись исчезнет автоматически
+System.gc();
+System.out.println(cache.isEmpty()); // true (после сборки мусора)
+```
 
 
 ### 254. Как правильно выбрать начальный capacity для HashMap
@@ -2274,6 +3173,30 @@ ACID — это набор требований к транзакционным 
 - **`REQUIRED`** (по умолчанию): если транзакция уже существует, метод **присоединяется** к ней. Если нет — создается новая. Откат в вызывающем методе откатит и вложенный вызов, так как это одна транзакция.
 - **`REQUIRES_NEW`**: всегда создает **новую, независимую** транзакцию. Если текущая транзакция существует, она **приостанавливается** на время выполнения нового метода. Откат или коммит в новой транзакции не влияет на внешнюю транзакцию (и наоборот).
 
+```java
+@Service
+public class OrderService {
+
+    @Transactional // REQUIRED: присоединяется к внешней транзакции
+    public void createOrder(Order order) {
+        orderRepo.save(order);
+        auditService.log("Order created"); // Та же транзакция
+    }
+}
+
+@Service
+public class AuditService {
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void log(String message) {
+        // Новая независимая транзакция
+        // Если здесь будет ошибка — только этот log откатится,
+        // а внешняя транзакция createOrder продолжится
+        auditRepo.save(new AuditLog(message));
+    }
+}
+```
+
 
 ### 271. Что такое аннотация @Transactional
 
@@ -2333,6 +3256,20 @@ String Pool (пул строк) — это специальная область
 - **Через литерал** (`String s = "hello"`): JVM проверяет String Pool. Если строка с таким значением уже там есть, возвращается ссылка на существующий объект. Если нет — создается новый объект в пуле, и возвращается ссылка на него.
 - **Через `new`** (`String s = new String("hello")`): **всегда** создается новый объект в куче (heap), независимо от того, есть ли такая строка в пуле. Строка из литерала-аргумента при этом уже находится в пуле, но `new` создает отдельную копию в куче.
 
+```java
+String a = "hello";
+String b = "hello";
+String c = new String("hello");
+
+System.out.println(a == b);      // true (обе ссылки на объект в пуле)
+System.out.println(a == c);      // false (c — отдельный объект в куче)
+System.out.println(a.equals(c)); // true (содержимое одинаковое)
+
+// intern() возвращает ссылку на объект из пула
+String d = c.intern();
+System.out.println(a == d);      // true
+```
+
 
 ### 280. Когда стоит использовать intern()
 
@@ -2354,6 +3291,21 @@ String Pool (пул строк) — это специальная область
 - **`StringBuffer`**: используйте в **многопоточных** сценариях, когда один и тот же буфер строк может модифицироваться из нескольких потоков. Все его методы синхронизированы, что обеспечивает потокобезопасность.
 
 В большинстве случаев рекомендуется `StringBuilder`, так как необходимость в потокобезопасном буфере строк возникает редко.
+
+```java
+// StringBuilder: быстрая сборка строки в цикле
+StringBuilder sb = new StringBuilder();
+for (int i = 0; i < 1000; i++) {
+    sb.append(i).append(",");
+}
+String result = sb.toString();
+
+// ❌ Неэффективно: создание множества промежуточных String-объектов
+String s = "";
+for (int i = 0; i < 1000; i++) {
+    s += i + ","; // Каждый + создает новый String
+}
+```
 
 
 ### 283. Почему StringBuffer медленнее StringBuilder
@@ -2382,6 +3334,19 @@ String Pool (пул строк) — это специальная область
 - **`equals()`** сравнивает **содержимое** (значения) строк: одинаковы ли последовательности символов, независимо от того, являются ли объекты разными экземплярами.
 
 Для сравнения строк всегда следует использовать `equals()` (или `equalsIgnoreCase()` при необходимости).
+
+```java
+String a = new String("hello");
+String b = new String("hello");
+
+System.out.println(a == b);        // false (разные объекты в памяти)
+System.out.println(a.equals(b));   // true (содержимое одинаковое)
+
+// Безопасное сравнение с null:
+String x = null;
+System.out.println("hello".equals(x)); // false (без NPE)
+// System.out.println(x.equals("hello")); // NPE!
+```
 
 
 ### 288. Где хранится String Pool (в какой области памяти)
@@ -2504,6 +3469,41 @@ String Pool (пул строк) — это специальная область
     - Не позволяйте изменять эти объекты через методы класса.
     - Не делитесь ссылками на эти изменяемые объекты. При передаче в конструктор создавайте **защитные копии (defensive copies)** и сохраняйте ссылки на них. Аналогично, при возврате из методов создавайте копии внутренних изменяемых объектов, чтобы не возвращать оригинальные ссылки.
 
+```java
+// Иммутабельный класс
+public final class Money {
+    private final long amount;
+    private final Currency currency;
+
+    public Money(long amount, Currency currency) {
+        this.amount = amount;
+        this.currency = currency; // Currency — неизменяемый enum
+    }
+
+    public long getAmount() {
+        return amount;
+    }
+
+    public Currency getCurrency() {
+        return currency;
+    }
+
+    // Метод, возвращающий новый объект
+    public Money add(Money other) {
+        if (this.currency != other.currency) {
+            throw new IllegalArgumentException("Different currencies");
+        }
+        return new Money(this.amount + other.amount, this.currency);
+    }
+}
+
+// Использование:
+Money m1 = new Money(100, Currency.USD);
+Money m2 = m1.add(new Money(50, Currency.USD));
+System.out.println(m1.getAmount()); // 100 (неизменён)
+System.out.println(m2.getAmount()); // 150 (новый объект)
+```
+
 
 ### 304. Почему класс String является иммутабельным
 
@@ -2556,6 +3556,37 @@ String Pool (пул строк) — это специальная область
 ### 310. Что такое defensive copy (защитная копия)
 
 **Защитная копия (defensive copy)** — это создание копии объекта для защиты от нежелательных изменений. В контексте иммутабельности это практика, при которой класс, содержащий ссылку на изменяемый объект, создает и хранит **копию** этого объекта, а не оригинальную ссылку. Аналогично, при возврате такого объекта из метода возвращается его копия. Это гарантирует, что внутреннее состояние класса не может быть изменено извне через переданные или возвращенные ссылки. Defensive copying является важным приемом для обеспечения истинной иммутабельности, когда классы не могут быть полностью построены на иммутабельных компонентах.
+
+```java
+// Defensive copy для Date
+public final class Appointment {
+    private final Date time;
+
+    public Appointment(Date time) {
+        // Принимаем копию
+        this.time = (Date) time.clone();
+    }
+
+    public Date getTime() {
+        // Возвращаем копию
+        return (Date) time.clone();
+    }
+}
+
+// Без defensive copy:
+Appointment appt = new Appointment(new Date());
+Date originalDate = new Date();
+Appointment appt2 = new Appointment(originalDate);
+originalDate.setTime(System.currentTimeMillis() + 86400000);
+// appt2.getTime() изменилось! (без clone)
+
+// С defensive copy:
+Appointment appt3 = new Appointment(new Date());
+Date date = new Date();
+Appointment appt4 = new Appointment(date);
+date.setTime(System.currentTimeMillis() + 86400000);
+System.out.println(appt4.getTime().equals(date)); // false (изолировано)
+```
 
 
 ### 311. Когда нужно делать defensive copy
@@ -2626,6 +3657,26 @@ String Pool (пул строк) — это специальная область
 **Record** (запись) — это специальный тип класса, introduced in Java 16, предназначенный для создания **неизменяемых (shallowly immutable) классов-носителей данных**. Record автоматически генерирует конструктор, геттеры (методы доступа), а также методы `equals()`, `hashCode()` и `toString()` на основе объявленных компонентов.
 
 Все поля Record являются `private final`, и для них не генерируются сеттеры. Это делает Record отличным инструментом для создания простых иммутабельных классов. Однако важно помнить, что Record обеспечивает только **поверхностную (shallow) иммутабельность**. Если один из компонентов Record является ссылкой на изменяемый объект, этот объект все еще можно изменить, и для полной иммутабельности потребуется защитное копирование.
+
+```java
+// Record: автоматическая генерация методов
+public record Point(int x, int y) {
+    // Автоматически создаются:
+    // - Point(int x, int y) — конструктор
+    // - int x(), int y() — геттеры
+    // - equals(), hashCode(), toString()
+}
+
+Point p1 = new Point(1, 2);
+Point p2 = new Point(1, 2);
+
+System.out.println(p1.x());    // 1
+System.out.println(p1.equals(p2)); // true
+System.out.println(p1.hashCode() == p2.hashCode()); // true
+
+// Record — immutable:
+// p1.x = 10; // Compile error!
+```
 
 
 ### 321. Почему LocalDate, LocalDateTime иммутабельны
@@ -2736,6 +3787,27 @@ String Pool (пул строк) — это специальная область
 
 Dockerfile — это текстовый файл-инструкция, содержащий набор команд для сборки образа Docker. Каждая инструкция создаёт новый слой образа, который кэшируется и может быть переиспользован при последующих сборках. Dockerfile описывает, какая базовая ОС используется, какие зависимости и файлы копируются в образ, какие команды выполняются при сборке и что запускается при старте контейнера.
 
+```dockerfile
+# Базовый образ
+FROM eclipse-temurin:17-jre-alpine
+
+# Рабочая директория
+WORKDIR /app
+
+# Копирование артефакта
+COPY target/app.jar app.jar
+
+# Переменные окружения
+ENV JAVA_OPTS="-Xms512m -Xmx512m"
+
+# Порт для приложения
+EXPOSE 8080
+
+# Команда запуска
+ENTRYPOINT ["java", "-jar", "app.jar"]
+CMD ["--spring.profiles.active=prod"]
+```
+
 
 ### 333. Какие основные инструкции используются в Dockerfile
 
@@ -2764,10 +3836,58 @@ Multi-stage build — это функция Docker, позволяющая ис�
 
 Преимущества: итоговый образ получается значительно меньше и безопаснее, так как не содержит инструментов сборки, исходного кода и зависимостей, ненужных для выполнения.
 
+```dockerfile
+# Stage 1: Сборка
+FROM maven:3.9-eclipse-temurin-17 AS builder
+WORKDIR /build
+COPY pom.xml .
+COPY src ./src
+RUN mvn clean package -DskipTests
+
+# Stage 2: Финальный минимальный образ
+FROM eclipse-temurin:17-jre-alpine
+WORKDIR /app
+COPY --from=builder /build/target/app.jar app.jar
+EXPOSE 8080
+ENTRYPOINT ["java", "-jar", "app.jar"]
+```
+
 
 ### 336. Что такое Docker Compose
 
 Docker Compose — это инструмент для **определения и запуска многоконтейнерных приложений**. С помощью YAML-файла (`docker-compose.yml`) вы описываете все сервисы вашего приложения (например, веб-сервер, базу данных, кэш), их конфигурацию, сети и тома. Затем одной командой (`docker compose up`) Compose создаёт и запускает все контейнеры в правильном порядке, а также настраивает между ними сеть, включая DNS, чтобы контейнеры могли обращаться друг к другу по именам сервисов.
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+
+services:
+  app:
+    image: myapp:latest
+    ports:
+      - "8080:8080"
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+    depends_on:
+      - postgres
+      - redis
+
+  postgres:
+    image: postgres:15
+    environment:
+      - POSTGRES_DB=mydb
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=pass
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+
+volumes:
+  pgdata:
+```
 
 
 ### 337. Что такое Kubernetes и зачем он нужен
@@ -2791,6 +3911,32 @@ Pod — это **наименьшая и основная единица раз�
 
 Контейнеры внутри пода всегда планируются и запускаются вместе. На практике чаще всего один под содержит один контейнер, но multi-container поды используются для вспомогательных задач (например, сайдкар-контейнер с прокси или сборщиком логов).
 
+```yaml
+# Pod манифест
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-app-pod
+  labels:
+    app: my-app
+spec:
+  containers:
+    - name: app
+      image: myapp:latest
+      ports:
+        - containerPort: 8080
+      env:
+        - name: LOG_LEVEL
+          value: "INFO"
+      resources:
+        requests:
+          memory: "256Mi"
+          cpu: "250m"
+        limits:
+          memory: "512Mi"
+          cpu: "500m"
+```
+
 
 ### 339. Что такое Node в Kubernetes
 
@@ -2800,6 +3946,22 @@ Node (узел) — это **рабочая машина** (физическая
 ### 340. Что такое Service в Kubernetes
 
 Service — это абстракция, которая определяет **стабильный сетевой endpoint** для доступа к группе подов. Поскольку поды эфемерны (их IP-адреса меняются при пересоздании), Service предоставляет постоянный IP-адрес и DNS-имя, а также выполняет балансировку нагрузки между всеми здоровыми подами, которые соответствуют его селектору меток. Это позволяет клиентам обращаться к приложению, не отслеживая изменения в подах.
+
+```yaml
+# Service манифест
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-app-service
+spec:
+  type: ClusterIP
+  selector:
+    app: my-app  # Метки подов
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080  # Порт контейнера
+```
 
 
 ### 341. Какие типы Service существуют (ClusterIP, NodePort, LoadBalancer)
@@ -2813,6 +3975,29 @@ Service — это абстракция, которая определяет **�
 ### 342. Что такое ReplicaSet
 
 ReplicaSet — это контроллер Kubernetes, который гарантирует, что **заданное количество реплик (экземпляров) пода** всегда запущено в кластере. Если под падает или удаляется, ReplicaSet создаёт новый, чтобы поддерживать желаемое состояние. Обычно ReplicaSet не используется напрямую, а управляется через более высокоуровневый контроллер — **Deployment**, который добавляет возможности обновления и отката.
+
+```yaml
+# Deployment манифест
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app-deployment
+spec:
+  replicas: 3  # Количество реплик
+  selector:
+    matchLabels:
+      app: my-app
+  template:
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      containers:
+        - name: app
+          image: myapp:latest
+          ports:
+            - containerPort: 8080
+```
 
 
 ### 343. Как происходит масштабирование в Kubernetes
@@ -2834,6 +4019,29 @@ HorizontalPodAutoscaler (HPA) — это ресурс Kubernetes, который
 - **Secret** предназначен для хранения **конфиденциальных** данных (пароли, API-токены, TLS-ключи). Данные в Secret по умолчанию кодируются в **base64**, но не шифруются. Для реальной защиты требуется включение шифрования в etcd и использование RBAC для ограничения доступа.
 
 Оба объекта могут быть смонтированы в под как файлы или переданы как переменные окружения.
+
+```yaml
+# ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  LOG_LEVEL: "INFO"
+  DB_HOST: "postgres"
+  DB_PORT: "5432"
+
+# Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secret
+type: Opaque
+stringData:
+  DB_USER: "admin"
+  DB_PASSWORD: "secret123"
+  API_KEY: "abc123xyz"
+```
 
 
 ### 346. Что такое liveness probe
@@ -2910,7 +4118,24 @@ StatefulSet используется для баз данных (PostgreSQL, Mon
 ## 15. Kafka
 ### 354. Что такое топик (topic) в Kafka
 
-Топик — это логическое имя, под которым публикуются сообщения. Это категория или канал, в который продюсеры записывают данные, а консьюмеры из него читают. Топик является логическим контейнером для сообщений и не хранит данные сам по себе — данные распределяются по его партициям. Каждый топик имеет набор настроек, определяющих поведение данных, включая время хранения (retention), политику очистки (cleanup.policy) и количество партиций.
+Топик — это логическое имя, под которым публикуются сообщения. Это категория или канал, в который продюсеры записывают данные, а консьюмеры из него читают. Топик является логическим контейнером для сообщений и не хранит данные сам по себе — данные распределяются по его партициям. Каждый топик имеет набор настроек, определяющих поведение данных, включая время хранение (retention), политику очистки (cleanup.policy) и количество партиций.
+
+```java
+// Создание топика через Kafka AdminClient
+import org.apache.kafka.clients.admin.*;
+
+Properties props = new Properties();
+props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
+
+try (AdminClient admin = AdminClient.create(props)) {
+    NewTopic topic = new NewTopic("orders", 3, (short) 3); // 3 партиции, replication factor 3
+    topic.configs(Map.of(
+        "retention.ms", "604800000",  // 7 дней
+        "cleanup.policy", "delete"
+    ));
+    admin.createTopics(List.of(topic));
+}
+```
 
 
 ### 355. Что такое партиция (partition) и зачем она нужна
@@ -2929,6 +4154,26 @@ StatefulSet используется для баз данных (PostgreSQL, Mon
 - **По ключу**: если у сообщения есть ключ, Kafka вычисляет хеш от ключа и по модулю количества партиций определяет номер партиции. Это гарантирует, что все сообщения с одинаковым ключом попадут в одну и ту же партицию и будут обработаны в порядке отправки.
 - **Без ключа**: если ключ равен `null`, используется стратегия **round-robin** (циклическое распределение по партициям) или **случайная** стратегия (в старых версиях). Это обеспечивает равномерную балансировку, но не даёт гарантий порядка между сообщениями, отправленными без ключа.
 
+```java
+// Producer: отправка с ключом и без ключа
+import org.apache.kafka.clients.producer.*;
+
+Properties props = new Properties();
+props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
+props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+
+try (KafkaProducer<String, String> producer = new KafkaProducer<>(props)) {
+    // С ключом: все сообщения с orderId=123 попадут в одну партицию
+    ProducerRecord<String, String> record1 = new ProducerRecord<>("orders", "123", "order-created");
+    producer.send(record1);
+
+    // Без ключа: round-robin по партициям
+    ProducerRecord<String, String> record2 = new ProducerRecord<>("orders", "order-paid");
+    producer.send(record2);
+}
+```
+
 
 ### 357. Что такое ключ сообщения и как он влияет на партиционирование
 
@@ -2940,6 +4185,30 @@ StatefulSet используется для баз данных (PostgreSQL, Mon
 ### 358. Что такое Consumer Group
 
 Consumer Group — это механизм, позволяющий нескольким консьюмерам координированно читать данные из топика. Ключевое правило: **каждая партиция в рамках одной consumer group может быть назначена только одному консьюмеру**. Это обеспечивает параллельную обработку без дублирования: если один консьюмер упадёт, его партиции будут перераспределены между оставшимися живыми членами группы.
+
+```java
+// Consumer: чтение из топика в consumer group
+import org.apache.kafka.clients.consumer.*;
+
+Properties props = new Properties();
+props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
+props.put(ConsumerConfig.GROUP_ID_CONFIG, "order-processors");  // Consumer group
+props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+
+try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
+    consumer.subscribe(List.of("orders"));
+
+    while (true) {
+        ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(100));
+        for (ConsumerRecord<String, String> record : records) {
+            System.out.printf("key=%s, value=%s, partition=%d, offset=%d%n",
+                record.key(), record.value(), record.partition(), record.offset());
+        }
+    }
+}
+```
 
 
 ### 359. Как работает балансировка консьюмеров в группе
@@ -2970,6 +4239,24 @@ Consumer Group — это механизм, позволяющий нескол�
 - **At-most-once (не более одного раза)**: offset коммитится **до** обработки сообщения. Если обработка упадёт, сообщение будет потеряно, но дубликатов не возникнет. Подходит для некритичных данных (метрики, логи), где потеря допустима.
 - **At-least-once (как минимум один раз)**: offset коммитится **после** успешной обработки. При сбое после обработки, но до коммита, сообщение будет обработано повторно, что может привести к дубликатам. Это стандартный выбор для большинства продакшн-систем.
 - **Exactly-once (ровно один раз)**: сообщение обрабатывается ровно один раз, без потерь и дубликатов. Требует идемпотентного продюсера и/или транзакций, а также идемпотентной обработки на стороне консьюмера (или транзакционного связывания коммита offset с записью результата).
+
+```java
+// At-least-once: коммит после обработки
+while (true) {
+    ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(100));
+    for (ConsumerRecord<String, String> record : records) {
+        try {
+            processMessage(record.value());  // Обработка
+            // Если здесь будет ошибка — offset не закоммитится,
+            // сообщение будет перечитано при следующей итерации
+        } catch (Exception e) {
+            // Логирование, возможно retry
+            throw e;
+        }
+    }
+    consumer.commitSync();  // Коммит ПОСЛЕ успешной обработки всех сообщений
+}
+```
 
 
 ### 364. Как настроить exactly-once семантику
@@ -3038,6 +4325,16 @@ ISR — это набор реплик партиции (включая лиде
 - **`acks=0`**: продюсер не ждёт подтверждения от брокера вообще. Максимальная пропускная способность, но возможна потеря данных при сбое брокера.
 - **`acks=1`**: продюсер ждёт подтверждения только от **лидера** партиции. Лидер подтверждает запись сразу после сохранения в свой лог, не дожидаясь репликации на фолловеры. Возможна потеря данных, если лидер упадёт до того, как фолловеры успеют скопировать запись.
 - **`acks=all`** (или `-1`): продюсер ждёт подтверждения от **всех реплик в ISR**. Это самая надёжная опция, гарантирующая, что данные сохранятся даже при отказе лидера (при условии, что `min.insync.replicas` > 1).
+
+```java
+// Producer конфигурация для надёжности
+Properties props = new Properties();
+props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
+props.put(ProducerConfig.ACKS_CONFIG, "all");  // Ждать всех реплик в ISR
+props.put(ProducerConfig.RETRIES_CONFIG, 3);   // Повторные попытки
+props.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true); // Идемпотентность
+props.put(ProducerConfig.MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION, 5);
+```
 
 
 ### 374. Что такое batch в Kafka producer
@@ -3151,6 +4448,46 @@ Kafka не предоставляет встроенного механизма 
 - **Инициализировать вручную** с помощью `Hibernate.initialize()` внутри транзакции, если нужно загрузить конкретную ассоциацию.
 - **Open Session in View (OSIV)** — паттерн, при котором сессия остаётся открытой на время рендеринга представления (например, в Spring Boot включён по умолчанию). Это решает проблему, но считается спорной практикой, так как держит соединение с БД дольше необходимого.
 
+```java
+// ❌ LazyInitializationException: обращение к ленивой ассоциации вне сессии
+public class OrderService {
+
+    @Transactional(readOnly = true)
+    public OrderDto getOrderDto(Long id) {
+        Order order = orderRepo.findById(id).orElseThrow();
+        // Сессия ещё открыта (внутри @Transactional)
+        // Но если мы выйдем из транзакции и попробуем получить customers:
+        // order.getCustomers().forEach(...); // LLE вне транзакции!
+        return mapToDto(order);
+    }
+
+    // ✅ Решение 1: JOIN FETCH
+    @Transactional(readOnly = true)
+    public OrderDto getOrderDtoWithCustomers(Long id) {
+        Order order = orderRepo.findByIdWithCustomers(id); // JOIN FETCH
+        // customers уже загружены
+        return mapToDto(order);
+    }
+
+    // ✅ Решение 2: DTO-проекция
+    @Transactional(readOnly = true)
+    public OrderDto getOrderDtoProjection(Long id) {
+        // Запрашиваем только нужные поля, без ленивых связей
+        return orderRepo.findOrderDtoById(id);
+    }
+}
+
+// Repository
+public interface OrderRepository extends JpaRepository<Order, Long> {
+
+    @Query("SELECT o FROM Order o JOIN FETCH o.customers WHERE o.id = :id")
+    Order findByIdWithCustomers(@Param("id") Long id);
+
+    @Query("SELECT new com.example.OrderDto(o.id, o.total, COUNT(o.customers)) FROM Order o WHERE o.id = :id")
+    OrderDto findOrderDtoById(@Param("id") Long id);
+}
+```
+
 
 ### 388. Какие стратегии fetch существуют в Hibernate
 
@@ -3244,10 +4581,52 @@ Flush может происходить автоматически (перед �
 
 Оптимистичная блокировка предполагает, что конфликты происходят редко, и не блокирует данные на время транзакции. Вместо этого она **обнаруживает конфликт при commit**. Реализуется путём добавления в сущность поля-версии, помеченного аннотацией `@Version` (обычно `int`, `long` или `Timestamp`). При каждом обновлении Hibernate увеличивает версию и проверяет, что она не изменилась с момента загрузки. Если версия изменилась (другая транзакция успела обновить запись), выбрасывается `OptimisticLockException`.
 
+```java
+@Entity
+public class Account {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    private String owner;
+
+    private BigDecimal balance;
+
+    @Version
+    private Long version;  // Оптимистичная блокировка
+
+    // Методы...
+}
+
+// При обновлении:
+// UPDATE accounts SET balance=?, version=? WHERE id=? AND version=?
+// Если версия изменилась — 0 строк обновлено → OptimisticLockException
+```
+
 
 ### 401. Как реализовать пессимистичную блокировку в JPA
 
 Пессимистичная блокировка явно **блокирует** запись в базе данных на время транзакции, предотвращая её изменение другими транзакциями. В JPA это делается через `EntityManager.find()` или `Query` с параметром `LockModeType`, например `LockModeType.PESSIMISTIC_WRITE` (обычно транслируется в `SELECT ... FOR UPDATE`). Другие транзакции, пытающиеся изменить или заблокировать эту же запись, будут ждать освобождения блокировки. Это стратегия выбора при высокой конкуренции за одни и те же данные.
+
+```java
+// Пессимистичная блокировка через EntityManager
+@Transactional
+public void transferFunds(Long fromId, Long toId, BigDecimal amount) {
+    // Блокируем обе записи на время транзакции
+    Account from = em.find(Account.class, fromId, LockModeType.PESSIMISTIC_WRITE);
+    Account to = em.find(Account.class, toId, LockModeType.PESSIMISTIC_WRITE);
+
+    if (from.getBalance().compareTo(amount) < 0) {
+        throw new InsufficientFundsException();
+    }
+
+    from.setBalance(from.getBalance().subtract(amount));
+    to.setBalance(to.getBalance().add(amount));
+
+    // При commit блокировки будут освобождены
+}
+```
 
 
 ### 402. Что такое @Version и зачем она нужна
@@ -3397,6 +4776,16 @@ Circuit Breaker (предохранитель) — паттерн отказоу
 - **Open** — запросы немедленно отклоняются без вызова сервиса; по истечении таймаута происходит переход в Half-Open.
 - **Half-Open** — пропускается ограниченное число пробных запросов; при успехе возврат в Closed, при сбое — снова в Open.
 
+```mermaid
+stateDiagram-v2
+    [*] --> Closed
+    Closed --> Open: порог ошибок превышен
+    Open --> HalfOpen: таймаут истёк
+    HalfOpen --> Closed: пробные запросы успешны
+    HalfOpen --> Open: сбой
+    Open --> [*]
+```
+
 
 ### 420. Что такое Service Discovery и зачем он нужен
 
@@ -3468,6 +4857,35 @@ Bulkhead (переборка) — изоляция ресурсов (напри�
 
 Retry — повторение неудачного вызова в расчёте на временный сбой. Правильно использовать только для идемпотентных операций и временных ошибок (сетевые сбои, таймауты, 5xx). Нужно ограничивать число попыток, применять экспоненциальную задержку с джиттером, не повторять при бизнес-ошибках (4xx) и сочетать с Circuit Breaker, чтобы не устраивать «шторм» повторов.
 
+❌ Повтор без задержки, при любой ошибке, с большим числом попыток:
+
+```java
+for (int attempt = 0; attempt < 10; attempt++) {
+    try {
+        return paymentService.charge(order);
+    } catch (Exception e) {
+        // повтор немедленно и даже при 4xx (некорректный платёж)
+    }
+}
+```
+
+✅ Ограничение числа попыток, только сетевые/5xx ошибки, экспоненциальная задержка + джиттер:
+
+```java
+int maxAttempts = 3;
+long baseDelayMs = 200;
+for (int attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+        return paymentService.charge(order);
+    } catch (IOException | ServiceUnavailableException e) {
+        long delay = baseDelayMs * (1L << attempt)          // 200, 400, 800
+                   + ThreadLocalRandom.current().nextLong(baseDelayMs);
+        Thread.sleep(delay);
+    }
+}
+throw new ServiceException("Все попытки исчерпаны");
+```
+
 
 ### 433. Что такое exponential backoff
 
@@ -3518,7 +4936,45 @@ Strangler Fig — постепенная миграция монолита на 
 
 Классический пример — класс `UserService`, который выполняет слишком много функций: валидирует email, сохраняет пользователя в базу данных (`entityManager.persist`), отправляет приветственное письмо и ведет аудит.
 
-**Проблемы такого нарушения:** Любое изменение, будь то в логике валидации, шаблоне письма или формате аудита, потребует модификации этого класса. Это делает класс хрупким и сложным для тестирования, так как каждый тест должен будет учитывать все его обязанности.
+❌ Нарушение — один класс на всё:
+
+```java
+@Service
+public class UserService {
+    @PersistenceContext private EntityManager em;
+    private final MailClient mail;
+    private final AuditLog audit;
+
+    public User register(User user) {
+        if (!user.getEmail().matches("[\\w.]+@[\\w.]+\\.[a-z]+")) throw new IllegalArgumentException();
+        em.persist(user);
+        mail.send(user.getEmail(), "Welcome!");
+        audit.log("REGISTER", user.getId());
+        return user;
+    }
+}
+```
+
+✅ Разделение ответственностей — каждый класс делает одно:
+
+```java
+@Service
+public class UserService {
+    private final UserRepository repo;
+    private final EmailValidator validator;
+    private final WelcomeMailer mailer;
+    private final AuditLogger audit;
+
+    public User register(User user) {
+        validator.validate(user.getEmail());
+        User saved = repo.save(user);
+        mailer.sendWelcome(saved);
+        audit.log("REGISTER", saved.getId());
+        return saved;
+    }
+}
+```
+
 
 ### 442. Что такое принцип Open/Closed?
 
@@ -3530,6 +4986,44 @@ Strangler Fig — постепенная миграция монолита на 
 
 **Рефакторинг:** Вместо этого следует вынести логику для каждого типа в отдельный класс, реализующий общий интерфейс. Например, создать интерфейс `DiscountStrategy` с методом `calculate(Order order)`. Затем для каждого типа скидки (VIP, Regular и т.д.) создать свой класс, реализующий этот интерфейс. Теперь, чтобы добавить новый тип скидки, вы просто создаете новый класс-стратегию, не меняя существующий код.
 
+❌ Нарушение OCP — ветвление по типу:
+
+```java
+public class DiscountCalculator {
+    public BigDecimal calculate(Order order) {
+        if (order.getType().equals("VIP")) {
+            return order.getAmount().multiply(new BigDecimal("0.30"));
+        } else if (order.getType().equals("REGULAR")) {
+            return order.getAmount().multiply(new BigDecimal("0.05"));
+        }
+        return BigDecimal.ZERO;
+    }
+}
+```
+
+✅ OCP — общий интерфейс + отдельные стратегии (новый тип = новый класс):
+
+```java
+public interface DiscountStrategy {
+    BigDecimal calculate(Order order);
+}
+
+@Component
+public class VipStrategy implements DiscountStrategy {
+    public BigDecimal calculate(Order order) {
+        return order.getAmount().multiply(new BigDecimal("0.30"));
+    }
+}
+
+@Component
+public class RegularStrategy implements DiscountStrategy {
+    public BigDecimal calculate(Order order) {
+        return order.getAmount().multiply(new BigDecimal("0.05"));
+    }
+}
+```
+
+
 ### 444. Что такое принцип Liskov Substitution?
 
 **Liskov Substitution Principle (LSP)** утверждает, что объекты подкласса должны быть полностью взаимозаменяемы с объектами базового класса, не нарушая корректность программы. Это означает, что подкласс должен расширять поведение базового класса, а не изменять или сужать его.
@@ -3539,6 +5033,29 @@ Strangler Fig — постепенная миграция монолита на 
 Классический пример — отношение между `Rectangle` (Прямоугольник) и `Square` (Квадрат).
 
 Если `Square` наследуется от `Rectangle`, то у него есть методы `setWidth()` и `setHeight()`. Однако, в отличие от прямоугольника, установка ширины квадрата должна изменять и его высоту, чтобы он оставался квадратом. Это нарушает контракт, заложенный в `Rectangle`. Клиентский код, который работает с `Rectangle`, может установить ширину в 5, а высоту в 10, ожидая площадь 50. Если вместо `Rectangle` ему подсунуть `Square`, площадь может оказаться 100, что нарушит работу программы.
+
+❌ Нарушение — `Square` меняет поведение `set*` относительно контракта `Rectangle`:
+
+```java
+class Rectangle {
+    protected double width, height;
+    public void setWidth(double w)  { this.width = w; }
+    public void setHeight(double h) { this.height = h; }
+    public double area() { return width * height; }
+}
+
+class Square extends Rectangle {
+    public void setWidth(double w)  { width = height = w; }
+    public void setHeight(double h) { width = height = h; }
+}
+
+// Клиент, ожидающий поведение Rectangle:
+Rectangle r = new Square();
+r.setWidth(5);   // у Square это также задаст height = 5
+r.setHeight(10);
+System.out.println(r.area()); // 100, а не ожидаемые 50
+```
+
 
 ### 446. Что такое принцип Interface Segregation?
 
