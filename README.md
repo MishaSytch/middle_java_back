@@ -3773,6 +3773,33 @@ System.out.println(p1.hashCode() == p2.hashCode()); // true
 - **Эффективность**: контейнеры легковесны, запускаются за миллисекунды и потребляют значительно меньше ресурсов, чем виртуальные машины.
 - **Упрощение CI/CD**: контейнеры становятся стандартной единицей доставки, что упрощает автоматизацию развёртывания и масштабирования.
 
+```mermaid
+graph TB
+    User[Пользователь CLI]
+    subgraph Docker[Докер]
+        Client[Docker Client]
+        Daemon[Docker Daemon dockerd]
+        Registry[Registry]
+        Client -->|REST API| Daemon
+        Daemon -->|HTTPS pull push| Registry
+    end
+    subgraph Runtime[OCI runtime]
+        Runc[runc]
+        Proc[Процесс контейнера PID 1]
+        Runc -->|exec| Proc
+    end
+    subgraph Container[Контейнер]
+        NS[Namespaces изоляция]
+        CG[Cgroups лимиты]
+        FS[OverlayFS образ + RW слой]
+        Proc -->|видит только себя| NS
+        Proc -->|ограничен ресурсами| CG
+        Proc -->|читает пишет| FS
+    end
+    User --> Client
+    Daemon -->|bundle| Runc
+```
+
 
 ### 331. В чём отличие контейнера от виртуальной машины
 
@@ -3893,6 +3920,28 @@ volumes:
 
 
 ### 337. Что такое Kubernetes и зачем он нужен
+```mermaid
+graph TB
+    User[Пользователь kubectl]
+    subgraph CP[Control Plane]
+        API[API Server]
+        etcd[etcd]
+        Sched[Scheduler]
+        CM[Controller Manager]
+        API <-->|read write| etcd
+        Sched -->|watch| API
+        CM -->|watch| API
+    end
+    subgraph Worker[Worker Node]
+        Kubelet[Kubelet]
+        Runtime[Container Runtime]
+        Pod[Pod]
+        Kubelet -->|manage| Runtime
+        Runtime -->|run| Pod
+    end
+    User -->|HTTPS| API
+    API -->|HTTPS| Kubelet
+```
 
 Kubernetes (K8s) — это открытая платформа для **оркестрации контейнеризированных приложений**. Если Docker решает задачу упаковки и запуска отдельного контейнера, то Kubernetes управляет **кластером** из множества машин (узлов) и запущенных на них контейнеров.
 
@@ -3937,6 +3986,24 @@ spec:
         limits:
           memory: "512Mi"
           cpu: "500m"
+```
+
+```mermaid
+graph TB
+    subgraph Node[Worker Node]
+        Kubelet[Kubelet]
+        Runtime[Container Runtime]
+        subgraph Pod[Pod]
+            C1[Container 1]
+            C2[Container 2]
+            Vol[Shared Volume]
+            C1 <-->|localhost| C2
+            C1 --> Vol
+            C2 --> Vol
+        end
+        Kubelet -->|manage| Runtime
+        Runtime -->|run| Pod
+    end
 ```
 
 
