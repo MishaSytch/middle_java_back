@@ -9156,11 +9156,11 @@ sequenceDiagram
     participant RplyExch as Reply Exchange
     participant RplyQ as Reply Queue
     Client ->> ReqExch: request (correlationId)
-    ReqExch ->> ReqQ
-    ReqQ ->> Server
+    ReqExch ->> ReqQ:
+    ReqQ ->> Server:
     Server ->> RplyExch: response (correlationId)
-    RplyExch ->> RplyQ
-    RplyQ ->> Client
+    RplyExch ->> RplyQ:
+    RplyQ ->> Client:
 ```
 
 **Как работает:**
