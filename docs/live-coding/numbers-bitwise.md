@@ -96,6 +96,45 @@ static void swap(int[] a, int i, int j) {   // XOR-обмен — только �
 ```
 Уметь объяснить каждый трюк на примере на бумаге — интервьюер любит «покажи на числе 12».
 
+<a id="r5-t7"></a>
+**7. [Классика] Подсчёт разрядов в двоичном представлении (popcount)**
+Сколько единиц в двоичной записи числа?
+```java
+// Керниган (по количеству единиц):
+static int popcount(int x) {
+    int n = 0;
+    while (x != 0) { x &= x - 1; n++; }  // каждый шаг гасит самый правый установленный бит
+    return n;
+}
+
+// Табличный (по байтам) — Integer.bitCount:
+// 8-битная таблица, 4 lookup-а:
+static int popcountTable(int x) {
+    byte[] T = {0,1,1,2,1,2,2,3,1,2,2,3,2,3,3,4, /* ... */ };
+    return T[x & 0xFF] + T[(x >>> 8) & 0xFF]
+         + T[(x >>> 16) & 0xFF] + T[(x >>> 24) & 0xFF];
+}
+
+// Java: Integer.bitCount(x) — в проде всегда этот
+```
+Обсудить: почему `x & (x-1)` гасит именно самый правый бит (на примере 12 = 1100: 1100 & 1011 = 1000); сложность Кернигана O(popcount), табличного O(1); `Integer.bitCount` — intrinsec в JVM (инструкция POPCNT).
+
+<a id="r5-t8"></a>
+**8. [Классика|hard] Set/Reset/Check/Test битового флага**
+Реализовать Flag-структуру: 64 флага, O(1) на операцию.
+```java
+class Flags {
+    private long bits; // 64 флага в одном long
+
+    void set(int f)     { bits |=  (1L << f); }
+    void reset(int f)   { bits &= ~(1L << f); }
+    boolean get(int f)  { return (bits & (1L << f)) != 0; }
+    void toggle(int f)  { bits ^=  (1L << f); }
+    long activeCount()  { return Long.bitCount(bits); }
+}
+```
+Обсудить: почему `long` (64 бита), не `int` (32); `1L << f` — сдвиг в long (иначе переполнение при f ≥ 32); `~(1L << f)` — инверсия только нужного бита; `Long.bitCount` — количество активных флагов. Расширение: `long[]` для > 64 флагов, `AtomicLong` для thread-safe.
+
 ---
 
 <a id="razdel-6"></a>

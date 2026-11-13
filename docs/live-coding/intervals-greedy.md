@@ -89,5 +89,67 @@ static int canCompleteCircuit(int[] gas, int[] cost) {
 ```
 Два факта: суммарный дефицит ≥ 0 → решение существует; если из старта s до i не хватило — ни один старт внутри (s, i] не годится. O(n) один проход.
 
+<a id="r13-t7"></a>
+**7. [Классика] Неразвернутые интервалы: максимум одновременных**
+`intervals = [[1,3],[2,4],[5,6],[3,5]]` → в момент 3-4 одновременно 2.
+```java
+static int maxOverlap(int[][] intervals) {
+    int[] events = new int[intervals.length * 2];
+    int idx = 0;
+    for (int[] iv : intervals) {
+        events[idx++] = iv[0];      // начало = +1
+        events[idx++] = iv[1];      // конец = -1 (но сортировка ниже)
+    }
+    // Сортируем: при равных временах конец ПЕРЕД началом ([1,3] и [3,5] не пересекаются)
+    // Используем пары (time, type): type 0 = end, type 1 = start
+    List<int[]> ev = new ArrayList<>();
+    for (int[] iv : intervals) {
+        ev.add(new int[]{iv[0], 1});  // start
+        ev.add(new int[]{iv[1], 0});  // end
+    }
+    ev.sort((a, b) -> a[0] != b[0] ? Integer.compare(a[0], b[0]) : Integer.compare(a[1], b[1]));
+    int cur = 0, max = 0;
+    for (int[] e : ev) {
+        cur += e[1];  // start = +1, end = -1 (но мы поместили end=0, start=1)
+        // Пересчитаем: end=0 → cur-- при end, start=1 → cur++ при start
+        // Упрощённо:
+    }
+    // Проще:
+    int[] starts = new int[intervals.length], ends = new int[intervals.length];
+    for (int i = 0; i < intervals.length; i++) { starts[i] = intervals[i][0]; ends[i] = intervals[i][1]; }
+    Arrays.sort(starts); Arrays.sort(ends);
+    int i = 0, j = 0, cur = 0, max = 0;
+    while (i < intervals.length) {
+        if (starts[i] < ends[j]) { cur++; max = Math.max(max, cur); i++; }
+        else j++;
+    }
+    return max;
+}
+```
+O(n log n). Два указателя по отсортированным массивам: если `start < end` → новая встреча началась (cur++), иначе → закончилась (cur--). При равенстве `start == end` — встреча закончилась до начала новой (полупромежутки).
+
+<a id="r13-t8"></a>
+**8. [Классика|hard] Maximum profit from stock transactions (k транзакций)**
+`prices = [3,2,6,3,100]`, k = 2 → 101 (купить 2, продать 6; купить 3, продать 100).
+```java
+// DP: dp[t][i] = max profit с ≤ t транзакций, используя цены 0..i
+// dp[t][i] = max(dp[t][i-1], prices[i] - min(prices[j] - dp[t-1][j-1]) for j < i)
+// Оптимизация: отслеживать minDiff = min(prices[j] - dp[t-1][j-1])
+static int maxProfit(int k, int[] prices) {
+    int n = prices.length;
+    int[] prev = new int[n], curr = new int[n]; // prev = dp[t-1], curr = dp[t]
+    for (int t = 1; t <= k; t++) {
+        int minDiff = -prices[0]; // prices[0] - prev[0-1] → prices[0] - 0
+        for (int i = 1; i < n; i++) {
+            minDiff = Math.max(minDiff, prices[i - 1] - prev[i - 1]);
+            curr[i] = Math.max(curr[i - 1], prices[i] + minDiff);
+        }
+        int[] tmp = prev; prev = curr; curr = tmp;
+    }
+    return prev[n - 1];
+}
+```
+O(k·n). `minDiff` — лучшая цена покупки с учётом прибыли из t-1 транзакций. Если k ≥ n/2 → жадность (все восходящие участки), O(n).
+
 ---
 <a id="razdel-14"></a>

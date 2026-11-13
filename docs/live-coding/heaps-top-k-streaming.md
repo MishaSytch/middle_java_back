@@ -106,5 +106,57 @@ static int lastStone(int[] stones) {
 ```
 Моделирование на макс-куче, O(n log n). Простая задача «насколько вы знаете PriorityQueue».
 
+<a id="r11-t7"></a>
+**7. [Классика] Top-K частых элементов**
+`nums = [1,1,1,3,3,2,2,2,5]`, k = 2 → [2, 1] (по частоте).
+```java
+static int[] topKFrequent(int[] nums, int k) {
+    Map<Integer, Integer> freq = new HashMap<>();
+    for (int x : nums) freq.merge(x, 1, Integer::sum);
+
+    // Мин-куча размера k по частоте: корень = наименьшая частота
+    PriorityQueue<Map.Entry<Integer, Integer>> pq =
+        new PriorityQueue<>(Comparator.comparingInt(Map.Entry::getValue));
+    for (var e : freq.entrySet()) {
+        pq.offer(e);
+        if (pq.size() > k) pq.poll();
+    }
+    int[] res = new int[k];
+    for (int i = k - 1; i >= 0; i--) res[i] = pq.poll().getKey();
+    return res;
+}
+```
+O(n log k). Альтернатива: bucket sort по частоте (O(n)) — массив списков, bucket[i] = элементы с частотой i; обход с конца.
+
+<a id="r11-t8"></a>
+**8. [Классика|hard] Найти медийный элемент в матрице (N×N, строки отсортированы)**
+Каждый элемент уникален. Найти N²/2-й по величине.
+```java
+static int median(int[][] m) {
+    int n = m.length, lo = m[0][0], hi = m[n-1][n-1];
+    while (lo < hi) {
+        int mid = lo + (hi - lo) / 2;
+        int count = countLessOrEqual(m, mid); // сколько элементов ≤ mid
+        if (count < (n * n + 1) / 2) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo;
+}
+// countLessOrEqual: для каждой строки — binary search (upper bound), O(N log N)
+static int countLessOrEqual(int[][] m, int val) {
+    int cnt = 0;
+    for (int[] row : m) {
+        int lo = 0, hi = row.length;
+        while (lo < hi) {
+            int mid = lo + (hi - lo) / 2;
+            if (row[mid] <= val) lo = mid + 1; else hi = mid;
+        }
+        cnt += lo;
+    }
+    return cnt;
+}
+```
+Binary search по значению + O(N log N) подсчёт → O(N log N · log(range)). Ключевая идея: не «извлечь k-й» (O(N²)), а «угадать» его бинарным поиском по диапазону значений.
+
 ---
 <a id="razdel-12"></a>

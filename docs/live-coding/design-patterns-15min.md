@@ -138,5 +138,69 @@ Response resp = mw.run(new Request("jwt...", "/api/orders"));
 ```
 Каждый слой решает: обработать самому или передать дальше. Сборка с хвоста — чтобы первый `use` оказался внешним. Прямая отсылка к фильтрам Servlet/Spring — проговорить.
 
+<a id="r20-t7"></a>
+**7. [Дизайн] Adapter: интеграция с legacy API**
+```java
+// Новый код работает с clean-интерфейсом:
+interface PaymentGateway { PaymentResult charge(String orderId, BigDecimal amount); }
+
+// Legacy API — странный контракт:
+class LegacyBankApi {
+    public Map<String, Object> processPayment(String ref, long cents) {
+        // возвращает { "status": "OK", "tx_id": "T123" } или { "status": "ERR", "code": 99 }
+    }
+}
+
+// Adapter: legacy → domain
+class LegacyPaymentAdapter implements PaymentGateway {
+    private final LegacyBankApi api;
+    LegacyPaymentAdapter(LegacyBankApi api) { this.api = api; }
+
+    @Override
+    public PaymentResult charge(String orderId, BigDecimal amount) {
+        Map<String, Object> raw = api.processPayment(orderId, amount.movePointRight(2).longValueExact());
+        if ("OK".equals(raw.get("status")))
+            return PaymentResult.success((String) raw.get("tx_id"));
+        throw new PaymentException((Integer) raw.get("code"));
+    }
+}
+```
+Обсудить: Adapter vs Decorator — Adapter меняет интерфейс (несовместимые), Decorator расширяет поведение (тот же интерфейс). Adapter vs ACL (Anti-Corruption Layer) — ACL шире: может конвертировать модели, не только методы.
+
+<a id="r20-t8"></a>
+**8. [Дизайн|hard] State: статус заказа с валидацией переходов**
+```java
+sealed interface OrderState permits Pending, Paid, Shipped, Delivered, Cancelled {}
+record Pending()  implements OrderState {}
+record Paid()     implements OrderState {}
+record Shipped()  implements OrderState {}
+record Delivered()implements OrderState {}
+record Cancelled()implements OrderState {}
+
+record Order(String id, OrderState state) {
+    Order transition(Event e) {
+        OrderState next = switch (this.state) {
+            case Pending p  -> switch (e) {
+                case Event.PAY    -> new Paid();
+                case Event.CANCEL -> new Cancelled();
+                default -> throw new IllegalStateException("из Pending: " + e);
+            };
+            case Paid p     -> switch (e) {
+                case Event.SHIP   -> new Shipped();
+                case Event.CANCEL -> new Cancelled();
+                default -> throw new IllegalStateException("из Paid: " + e);
+            };
+            case Shipped s  -> e == Event.DELIVER ? new Delivered()
+                            : throw new IllegalStateException("из Shipped: " + e);
+            case Delivered d, Cancelled c ->
+                throw new IllegalStateException("terminal: " + e);
+        };
+        return new Order(id, next);
+    }
+}
+enum Event { PAY, SHIP, DELIVER, CANCEL }
+```
+Sealed + exhaustive switch: компилятор ловит пропущенные переходы. Иммуtable state (record) — каждый переход создаёт новый Order. Фоллоу-ап: state machine vs if-else в сервисе; persistence — хранить только `state` (enum), не объект.
+
 ---
 <a id="razdel-21"></a>

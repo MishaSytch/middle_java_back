@@ -36,7 +36,7 @@
 19. [Паттерны проектирования](docs/interview/design-patterns.md)
 20. [Микросервисы](docs/interview/microservices.md)
 21. [System Design](docs/interview/system-design.md)
-22. [API Design & Documentation](docs/interview/api-design-documentation.md)
+22. [API Design & Documentation](docs/interview/api-design-documentation.md) *(опционально)*
 
 ### Асинхронность и стримы
 
@@ -67,10 +67,10 @@
 ### Cloud и современные технологии
 
 37. [Cloud-Native Java](docs/interview/cloud-native-java.md)
-38. [AI/LLM Integration](docs/interview/ai-llm-integration.md)
-39. [Kotlin Interop](docs/interview/kotlin-interop.md)
-40. [Supply Chain Security](docs/interview/supply-chain-security.md)
-41. [Legacy Modernization](docs/interview/legacy-modernization.md)
+38. [AI/LLM Integration](docs/interview/ai-llm-integration.md) *(опционально)*
+39. [Kotlin Interop](docs/interview/kotlin-interop.md) *(опционально)*
+40. [Supply Chain Security](docs/interview/supply-chain-security.md) *(опционально)*
+41. [Legacy Modernization](docs/interview/legacy-modernization.md) *(опционально)*
 
 ## Оглавление — Лайв-кодинг
 
