@@ -1,6 +1,6 @@
 # Java Middle
 
-Сборник подготовки к собеседованию на позицию Middle/Senior Java Developer.
+Сборник подготовки к собеседованию на позицию Middle/Middle+ Java Developer.
 
 ## Оглавление — Интервью
 
