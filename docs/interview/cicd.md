@@ -101,7 +101,7 @@ strategy:
 - Тестирование фронтенда в разных браузерах (Chrome, Firefox, Safari).
 
 
-### 5. Как настроить cache в GitHub Actions
+### 5. Как настроить cache (кэш) в GitHub Actions
 
 **Cache** в GitHub Actions хранит файлы между запусками workflow, чтобы не скачивать/пересобирать зависимости каждый раз. Основной инструмент — action `actions/cache` или встроенный `cache` параметр в `setup-java`.
 

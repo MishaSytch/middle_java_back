@@ -322,9 +322,9 @@ WHERE o.user_id = 1;
 ```
 
 **Connection Pooling**:
-- **HikariCP** (default Spring Boot): **быстрый**, **лёгкий** (10K+ connections/sec).
+- **HikariCP** (default Spring Boot): **быстрый**, **лёгкий** (10K+ connections/sec, соединений в секунду).
 - **Параметры**: **maximumPoolSize** (10–50), **minimumIdle** (5–10), **connectionTimeout** (30 сек).
-- **Проблема**: **мало** **connections** → **очередь**, **много** → **давление** **на** **БД**.
+- **Проблема**: **мало connections** (соединений) → **очередь**, **много** → **давление** **на** **БД**.
 
 ```yaml
 spring:
@@ -411,8 +411,8 @@ WebClient client = WebClient.builder()
 - **`net.ipv4.tcp_tw_reuse`**: **переиспользование** **TIME_WAIT** **соединений**.
 
 **Мониторинг**:
-- **Netty** **metrics**: **active** **connections**, **pending**.
-- **TCP** **connections**: **`ss -s`** (Linux), **`netstat`**.
+- **Netty** **metrics**: **active** **connections** (активные соединения), **pending** (в очереди).
+- **TCP** **connections** (соединения): **`ss -s`** (Linux), **`netstat`**.
 - **Latency**: **p95/p99** **network** **round-trip**.
 
 ### 8. Memory optimization: object pooling, primitive collections, off-heap
