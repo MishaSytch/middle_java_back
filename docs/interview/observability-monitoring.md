@@ -39,12 +39,25 @@
 
 **Архитектура**:
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart LR
     App["Application<br/>Java / Go / Python"] --> SDK["OTel SDK"]
     SDK -->|"Exporter"| Collector["OTel Collector"]
     Collector -->|"OTLP"| Backend1["Jaeger / Tempo"]
     Collector -->|"OTLP"| Backend2["Prometheus"]
     Collector -->|"OTLP"| Backend3["ELK / Loki"]
+    classDef n0 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef n4 fill:#fdf9e8,stroke:#d4c38a,stroke-width:2px,color:#1f2937
+    classDef n5 fill:#fbeaf3,stroke:#cf9fc2,stroke-width:2px,color:#1f2937
+    class App n0
+    class SDK n1
+    class Collector n2
+    class Backend1 n3
+    class Backend2 n4
+    class Backend3 n5
 ```
 
 **Компоненты**:
@@ -112,6 +125,7 @@ HttpClient httpClient = HttpClient.newBuilder()
 
 **Архитектура**:
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart LR
     P["Prometheus Server"] -->|"scrape /metrics"| T1["Target 1"]
     P -->|"scrape /metrics"| T2["Target 2"]
@@ -119,6 +133,19 @@ flowchart LR
     P --> TS["Time Series DB"]
     P --> Alert["Alertmanager"]
     Alert -->|"webhook"| Channel["Slack / Email / PagerDuty"]
+    classDef n0 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n4 fill:#fdeef0,stroke:#d49a9c,stroke-width:2px,color:#1f2937
+    classDef n5 fill:#fbeaf3,stroke:#cf9fc2,stroke-width:2px,color:#1f2937
+    class P n0
+    class T1 n1
+    class T2 n1
+    class T3 n1
+    class TS n2
+    class Alert n3
+    class Channel n4
 ```
 
 **Ключевые концепции**:
@@ -733,6 +760,7 @@ log.info("Processing order {}", orderId);
 **Референс-архитектура** observability для **Java-микросервисов** в **Kubernetes**:
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart TB
     subgraph Services["Java Microservices"]
         S1["Service A<br/>OTel SDK + Micrometer"]
@@ -772,6 +800,29 @@ flowchart TB
     TSDB --> Grafana
     Prom --> AM
     AM -->|"page/ticket"| OnCall["On-Call / Tickets"]
+    classDef n0 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef n4 fill:#fdf9e8,stroke:#d4c38a,stroke-width:2px,color:#1f2937
+    classDef n5 fill:#fdeef0,stroke:#d49a9c,stroke-width:2px,color:#1f2937
+    classDef n6 fill:#fbeaf3,stroke:#cf9fc2,stroke-width:2px,color:#1f2937
+    classDef n7 fill:#ffffff,stroke:#d1d5db,stroke-width:2px,color:#1f2937
+    class S1 n0
+    class S2 n0
+    class S3 n0
+    class OC n1
+    class Prom n1
+    class Tempo n2
+    class ES n2
+    class TSDB n2
+    class Grafana n3
+    class AM n4
+    class OnCall n5
+    class Services n7
+    class Collection n7
+    class Storage n7
+    class Visualization n7
 ```
 
 **Компоненты**:

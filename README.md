@@ -15,62 +15,63 @@
 7. [Иммутабельность](docs/interview/immutability.md)
 8. [Records и Дженерики](docs/interview/records-generics.md)
 9. [Java 17/21: современные фичи языка](docs/interview/java-17-21.md)
+10. [Java Core — тонкости](docs/interview/java-core-advanced.md)
 
 ### Spring & Frameworks
 
-10. [Spring / Spring Boot](docs/interview/spring-boot.md)
-11. [Spring Security](docs/interview/spring-security.md)
-12. [Hibernate / JPA](docs/interview/hibernate-jpa.md)
-13. [REST / HTTP](docs/interview/rest-http.md)
-14. [Тестирование (JUnit 5 / Mockito / Testcontainers)](docs/interview/testing.md)
+11. [Spring / Spring Boot](docs/interview/spring-boot.md)
+12. [Spring Security](docs/interview/spring-security.md)
+13. [Hibernate / JPA](docs/interview/hibernate-jpa.md)
+14. [REST / HTTP](docs/interview/rest-http.md)
+15. [Тестирование (JUnit 5 / Mockito / Testcontainers)](docs/interview/testing.md)
 
 ### Базы данных и кэширование
 
-15. [Базы данных / SQL / PostgreSQL](docs/interview/databases-sql-postgresql.md)
-16. [Транзакции](docs/interview/transactions.md)
-17. [Redis и кэширование](docs/interview/redis-caching.md)
-18. [Database Migrations](docs/interview/database-migrations.md)
+16. [Базы данных / SQL / PostgreSQL](docs/interview/databases-sql-postgresql.md)
+17. [Транзакции](docs/interview/transactions.md)
+18. [Redis и кэширование](docs/interview/redis-caching.md)
+19. [Database Migrations](docs/interview/database-migrations.md)
 
 ### Архитектура и паттерны
 
-19. [Паттерны проектирования](docs/interview/design-patterns.md)
-20. [Микросервисы](docs/interview/microservices.md)
-21. [System Design](docs/interview/system-design.md)
-22. [API Design & Documentation](docs/interview/api-design-documentation.md) *(опционально)*
+20. [Паттерны проектирования](docs/interview/design-patterns.md)
+21. [Микросервисы](docs/interview/microservices.md)
+22. [System Design](docs/interview/system-design.md)
+23. [API Design & Documentation](docs/interview/api-design-documentation.md) *(опционально)*
 
 ### Асинхронность и стримы
 
-23. [Stream API](docs/interview/stream-api.md)
-24. [CompletableFuture и асинхронность](docs/interview/completablefuture-async.md)
-25. [Реактивное программирование (WebFlux + Reactor)](docs/interview/reactive-webflux-reactor.md)
+24. [Stream API](docs/interview/stream-api.md)
+25. [CompletableFuture и асинхронность](docs/interview/completablefuture-async.md)
+26. [Реактивное программирование (WebFlux + Reactor)](docs/interview/reactive-webflux-reactor.md)
 
 ### Инфраструктура и DevOps
 
-26. [Docker / Kubernetes](docs/interview/docker-kubernetes.md)
-27. [Kafka](docs/interview/kafka.md)
-28. [RabbitMQ](docs/interview/rabbitmq.md)
-29. [CI/CD](docs/interview/cicd.md)
-30. [Git и сборка (Maven / Gradle)](docs/interview/git-build-maven-gradle.md)
+27. [Docker / Kubernetes](docs/interview/docker-kubernetes.md)
+28. [Kafka](docs/interview/kafka.md)
+29. [RabbitMQ](docs/interview/rabbitmq.md)
+30. [CI/CD](docs/interview/cicd.md)
+31. [Git и сборка (Maven / Gradle)](docs/interview/git-build-maven-gradle.md)
 
 ### Observability и Production
 
-31. [Память и Garbage Collection](docs/interview/memory-gc.md)
-32. [Observability & Monitoring](docs/interview/observability-monitoring.md)
-33. [Production Debugging](docs/interview/production-debugging.md)
-34. [Performance Engineering](docs/interview/performance-engineering.md)
+32. [Память и Garbage Collection](docs/interview/memory-gc.md)
+33. [Observability & Monitoring](docs/interview/observability-monitoring.md)
+34. [Production Debugging](docs/interview/production-debugging.md)
+35. [Performance Engineering](docs/interview/performance-engineering.md)
 
 ### Сети и Linux
 
-35. [Сети и протоколы](docs/interview/networking-protocols.md)
-36. [Linux: базовые вопросы](docs/interview/linux.md)
+36. [Сети и протоколы](docs/interview/networking-protocols.md)
+37. [Linux: базовые вопросы](docs/interview/linux.md)
 
 ### Cloud и современные технологии
 
-37. [Cloud-Native Java](docs/interview/cloud-native-java.md)
-38. [AI/LLM Integration](docs/interview/ai-llm-integration.md) *(опционально)*
-39. [Kotlin Interop](docs/interview/kotlin-interop.md) *(опционально)*
-40. [Supply Chain Security](docs/interview/supply-chain-security.md) *(опционально)*
-41. [Legacy Modernization](docs/interview/legacy-modernization.md) *(опционально)*
+38. [Cloud-Native Java](docs/interview/cloud-native-java.md)
+39. [AI/LLM Integration](docs/interview/ai-llm-integration.md) *(опционально)*
+40. [Kotlin Interop](docs/interview/kotlin-interop.md) *(опционально)*
+41. [Supply Chain Security](docs/interview/supply-chain-security.md) *(опционально)*
+42. [Legacy Modernization](docs/interview/legacy-modernization.md) *(опционально)*
 
 ## Оглавление — Лайв-кодинг
 

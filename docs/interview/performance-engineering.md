@@ -357,7 +357,7 @@ CREATE INDEX idx_active_orders ON orders(user_id) WHERE status = 'ACTIVE';
 **Мониторинг**:
 - **pg_stat_statements**: **топ** **медленных** **запросов**.
 - **pg_stat_user_tables**: **bloat**, **index** **usage**.
-- **慢** **запросы**: **EXPLAIN ANALYZE** + **индексы**.
+- **Медленные запросы**: **EXPLAIN ANALYZE** + **индексы**.
 
 ### 7. Network performance: compression, batching, connection reuse
 

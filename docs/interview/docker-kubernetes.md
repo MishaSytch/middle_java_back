@@ -11,6 +11,7 @@
 - **Упрощение CI/CD**: контейнеры становятся стандартной единицей доставки, что упрощает автоматизацию развёртывания и масштабирования.
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 graph TB
     User[Пользователь CLI]
     subgraph Docker[Докер]
@@ -35,6 +36,26 @@ graph TB
     end
     User --> Client
     Daemon -->|bundle| Runc
+    classDef n0 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#ffffff,stroke:#d1d5db,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef n4 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n5 fill:#fdeef0,stroke:#d49a9c,stroke-width:2px,color:#1f2937
+    classDef n6 fill:#fdf4ec,stroke:#d4a582,stroke-width:2px,color:#1f2937
+    classDef n7 fill:#fbeaf3,stroke:#cf9fc2,stroke-width:2px,color:#1f2937
+    class User n0
+    class Client n1
+    class Daemon n1
+    class Registry n3
+    class Docker n2
+    class Runc n4
+    class Proc n5
+    class Runtime n2
+    class NS n6
+    class CG n7
+    class FS n6
+    class Container n2
 ```
 
 
@@ -169,6 +190,7 @@ Kubernetes автоматизирует:
 
 Состав:
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 graph TB
     User[Пользователь kubectl]
     subgraph CP[Control Plane]
@@ -189,6 +211,25 @@ graph TB
     end
     User -->|HTTPS| API
     API -->|HTTPS| Kubelet
+    classDef n0 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#ffffff,stroke:#d1d5db,stroke-width:2px,color:#1f2937
+    classDef n4 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n5 fill:#fdeef0,stroke:#d49a9c,stroke-width:2px,color:#1f2937
+    classDef n6 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n7 fill:#fdf9e8,stroke:#d4c38a,stroke-width:2px,color:#1f2937
+    classDef n8 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    class User n0
+    class API n1
+    class etcd n2
+    class Sched n4
+    class CM n1
+    class CP n3
+    class Kubelet n4
+    class Runtime n6
+    class Pod n5
+    class Worker n3
 ```
 
 
@@ -228,6 +269,7 @@ spec:
 ```
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 graph TB
     subgraph Node[Worker Node]
         Kubelet[Kubelet]
@@ -243,6 +285,20 @@ graph TB
         Kubelet -->|manage| Runtime
         Runtime -->|run| Pod
     end
+    classDef n0 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#ffffff,stroke:#d1d5db,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n4 fill:#fdeef0,stroke:#d49a9c,stroke-width:2px,color:#1f2937
+    classDef n5 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef n6 fill:#fdf4ec,stroke:#d4a582,stroke-width:2px,color:#1f2937
+    class C1 n0
+    class C2 n1
+    class Kubelet n3
+    class Node n2
+    class Pod n2
+    class Runtime n1
+    class Vol n6
 ```
 
 

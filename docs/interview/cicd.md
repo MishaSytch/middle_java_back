@@ -12,12 +12,25 @@
 - **Continuous Deployment** — артефакт **автоматически** попадает в production без участия человека.
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart LR
     Commit[git push] --> Build[Сборка]
     Build --> Test[Тесты]
     Test -->|pass| Artifact[Артефакт / Docker-образ]
     Artifact --> Staging[Deploy: Staging]
     Staging -->|auto / manual| Prod[Deploy: Production]
+    classDef n0 fill:#e5f7ed,stroke:#92c4ad,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#fdf9e8,stroke:#d4c38a,stroke-width:2px,color:#1f2937
+    classDef n4 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n5 fill:#fbeaf3,stroke:#cf9fc2,stroke-width:2px,color:#1f2937
+    class Commit n0
+    class Build n1
+    class Test n2
+    class Artifact n3
+    class Staging n4
+    class Prod n5
 ```
 
 
@@ -445,10 +458,17 @@ workflows:
 
 **Как работает:**
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart LR
     Git[Git repo<br/>K8s manifests] --> Argo[ArgoCD]
     Argo -->|apply| K8s[Kubernetes cluster]
     K8s -.->|drift detection| Argo
+    classDef n0 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    class Git n0
+    class Argo n1
+    class K8s n2
 ```
 
 **Установка:**
@@ -525,6 +545,7 @@ spec:
 9. **Deploy to staging** — деплой в staging (если настроен).
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart TB
     C[Checkout] --> J[Setup JDK 21]
     J --> Cache[Restore Maven cache]
@@ -534,6 +555,20 @@ flowchart TB
     SA --> D[Docker build]
     D --> P[Push to GHCR]
     P --> S[Deploy to Staging]
+    classDef n0 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#fdf4ec,stroke:#d4a582,stroke-width:2px,color:#1f2937
+    classDef n4 fill:#fdeef0,stroke:#d49a9c,stroke-width:2px,color:#1f2937
+    class C n0
+    class J n1
+    class Cache n2
+    class B n3
+    class T n4
+    class SA n1
+    class D n2
+    class P n3
+    class S n0
 ```
 
 
@@ -631,12 +666,19 @@ services:
 5. Синяя среда становится «резервной». При необходимости можно **откатиться** мгновенно, переключив трафик обратно.
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart LR
     LB[Load Balancer]
     Blue[Blue — текущая]
     Green[Green — новый релиз]
     LB -->|"100% трафика"| Blue
     LB -.->|переключение| Green
+    classDef n0 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#fdf9e8,stroke:#d4c38a,stroke-width:2px,color:#1f2937
+    class LB n0
+    class Blue n1
+    class Green n2
 ```
 
 **Плюсы:**
@@ -658,12 +700,19 @@ flowchart LR
 4. Если метрики **ухудшаются** — трафик **откатывается** к старой версии (автоматически или вручную).
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart LR
     LB[Load Balancer]
     V1[Старая версия]
     V2["Новая версия (canary)"]
     LB -->|"5%"| V2
     LB -->|"95%"| V1
+    classDef n0 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#fdf9e8,stroke:#d4c38a,stroke-width:2px,color:#1f2937
+    class LB n0
+    class V1 n1
+    class V2 n2
 ```
 
 **В Kubernetes** canary реализовывается через:
@@ -907,6 +956,7 @@ containers:
 - **Cilium** — eBPF-based, может работать как Service Mesh и как CNI.
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart TB
     subgraph Pod1[Pod: Service A]
         A[App A]
@@ -919,6 +969,16 @@ flowchart TB
         B --> ProxyB
     end
     ProxyA -->|mTLS| ProxyB
+    classDef n0 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#ffffff,stroke:#d1d5db,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    class A n0
+    class B n1
+    class Pod1 n2
+    class Pod2 n2
+    class ProxyA n3
+    class ProxyB n3
 ```
 
 **Как работает:** каждый Pod получает **sidecar-прокси** (например, Envoy), который перехватывает весь исходящий и входящий трафик. Приложение не знает о его существовании. Control Plane (Pilot в Istio) раздаёт конфигурацию прокси.
@@ -945,10 +1005,19 @@ flowchart TB
 
 **Архитектура:**
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart LR
     App[Приложение] --> SDK[OTel SDK / Agent]
     SDK --> Collector[OTel Collector]
     Collector --> Backend[Jaeger / Prometheus / Grafana / Datadog]
+    classDef n0 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    class App n0
+    class SDK n1
+    class Collector n2
+    class Backend n3
 ```
 
 **Как работает в Java (Spring Boot):**

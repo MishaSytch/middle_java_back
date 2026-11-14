@@ -418,7 +418,7 @@ smartctl -a /dev/sda
 # В application.yaml:
 logging.level.com.myapp=DEBUG
 
-# Через环境变量:
+# Через переменные окружения:
 export LOGGING_LEVEL_COM_MYAPP=DEBUG
 
 # 2. Посмотреть логи в реальном времени

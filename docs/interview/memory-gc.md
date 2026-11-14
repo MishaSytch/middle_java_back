@@ -35,6 +35,7 @@
 Объект становится кандидатом на удаление сборщиком мусора, когда он **больше не достижим** ни по одной цепочке ссылок от **GC roots**. Другими словами, если ни один поток, ни одно статическое поле, ни один JNI-хэндл и т.д. не ссылаются на объект (прямо или косвенно), объект считается «мусором» и может быть собран. Важно, что GC не удаляет объект сразу — он помечает его как недостижимый, и память освобождается при следующем цикле сборки.
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart TD
     R1[GC root — локальная переменная] -->|ссылка| A[Объект A]
     R2[GC root — static field] -->|ссылка| B[Объект B]
@@ -44,6 +45,18 @@ flowchart TD
     Y[Объект Y — мусор]
     C -.-> X
     D -.-> Y
+    classDef n0 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#fdeef0,stroke:#d49a9c,stroke-width:2px,color:#1f2937
+    class R1 n0
+    class R2 n0
+    class A n1
+    class B n1
+    class C n2
+    class D n2
+    class X n3
+    class Y n3
 ```
 
 Объекты A, B, C, D — достижимы и живы. X и Y — недостижимы, кандидаты на сборку.
@@ -110,6 +123,7 @@ listeners.remove(l);
 **Metaspace** — это область памяти (вне кучи, в native memory с Java 8), где хранятся **метаданные классов** (определения классов, методы, константы). До Java 8 эту роль выполнял **PermGen** (Permanent Generation), который был частью кучи.
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart TB
     subgraph Heap[Heap]
         subgraph Young[Young Generation]
@@ -123,6 +137,19 @@ flowchart TB
     Eden -->|Minor GC| S0
     S0 -->|Minor GC| S1
     S1 -->|TenuringThreshold| Old
+    classDef n0 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#fdf9e8,stroke:#d4c38a,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n4 fill:#ffffff,stroke:#d1d5db,stroke-width:2px,color:#1f2937
+    classDef n5 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    class Eden n0
+    class S0 n1
+    class S1 n1
+    class Young n4
+    class Old n3
+    class Heap n4
+    class Meta n5
 ```
 
 
@@ -176,6 +203,7 @@ flowchart TB
 **Stop-the-world (STW)** — это событие в работе JVM, когда **все потоки приложения временно приостанавливаются** для выполнения критических операций сборщика мусора, которые не могут быть выполнены конкурентно (например, начальная маркировка корневых объектов, финальная remark-фаза, перемещение объектов в некоторых сборщиках). Во время STW-паузы приложение «замирает», что напрямую влияет на **задержку (latency)** и **пользовательский опыт**. Цель современных сборщиков (G1, ZGC, Shenandoah) — **минимизировать длительность и частоту STW-пауз**.
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart LR
     subgraph App[Приложение]
         T1[Поток 1]
@@ -190,6 +218,17 @@ flowchart LR
     STW -->|возобновление| T1
     STW -->|возобновление| T2
     STW -->|возобновление| T3
+    classDef n0 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#fdeef0,stroke:#d49a9c,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef n4 fill:#ffffff,stroke:#d1d5db,stroke-width:2px,color:#1f2937
+    class App n4
+    class T1 n0
+    class T2 n0
+    class T3 n0
+    class STW n2
+    class GC n3
 ```
 
 

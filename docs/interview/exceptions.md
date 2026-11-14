@@ -2,8 +2,47 @@
 
 ### 1. В чём разница между checked и unchecked exceptions
 
-- **Checked (проверяемые)** исключения — это наследники `Exception`, но **не** `RuntimeException`. Компилятор **требует** их обработки: метод должен либо объявить их в `throws`, либо обработать в `try-catch`. Они представляют **ожидаемые** проблемы внешней среды (файл не найден, сеть недоступна).
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
+flowchart TD
+    T["Throwable"]
+    E["Error<br/>(OOM, StackOverflow)"]
+    Ex["Exception"]
+    CE["Checked<br/>(IOException, SQLException)"]
+    UEx["Unchecked<br/>(RuntimeException)"]
+
+    T --> E
+    T --> Ex
+    Ex --> CE
+    Ex --> UEx
+
+    classDef error fill:#fdf1f1,stroke:#d49a9c,stroke-width:2px
+    classDef exception fill:#fdf4ec,stroke:#d4a582,stroke-width:2px
+    classDef checked fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px
+    classDef unchecked fill:#f3faf1,stroke:#9dc49a,stroke-width:2px
+    
+    class T,E error
+    class Ex exception
+    class CE checked
+    class UEx unchecked
+```
+
+- **Checked (проверяемые)** исключения — это наследники `Exception`, но **не** `RuntimeException`. Компилятор **требует** их обработки: метод должен либо объявить их в `throws`, либо обработать в `try-catch`. Они представляют **ожидаемые** проблемы внешней среды (файл не найден, сеть недоступен).
 - **Unchecked (непроверяемые)** исключения — это наследники `RuntimeException` (и `Error`). Компилятор **не требует** их обработки. Они представляют **программные ошибки** (NPE, `IndexOutOfBounds`, `IllegalArgument`) или непредвиденные сбои.
+
+```java
+// Checked — компилятор требует обработки
+public void readFile() throws IOException {
+    // IOException — checked
+    Files.readString(Path.of("file.txt"));
+}
+
+// Unchecked — компилятор не требует
+public int divide(int a, int b) {
+    // ArithmeticException — unchecked
+    return a / b; // NPE если b = 0
+}
+```
 
 
 ### 2. Что такое checked exception и когда его использовать
@@ -44,6 +83,25 @@ Unchecked exception — наследник `RuntimeException`, который к
 
 
 ### 8. Гарантируется ли выполнение блока finally
+
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
+flowchart TD
+    Start["Начало try"] --> Try["try блок"]
+    Try -->|"Норма (return)"| Finally
+    Try -->|"Исключение"| Catch
+    Catch -->|"catch обработал"| Finally
+    Catch -->|"re-throw"| Finally
+    Finally["finally блок<br/>ВСЕГДА выполняется"] --> End["Конец"]
+    
+    classDef tryBlock fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px
+    classDef catchBlock fill:#fdf4ec,stroke:#d4a582,stroke-width:2px
+    classDef finallyBlock fill:#f3faf1,stroke:#9dc49a,stroke-width:2px
+    
+    class Try tryBlock
+    class Catch catchBlock
+    class Finally finallyBlock
+```
 
 Блок `finally` выполняется **почти всегда**: и при нормальном завершении, и при исключении, и при `return`/`break`/`continue` из `try`/`catch`. **Не выполнится** только в исключительных случаях:
 - `System.exit()` — JVM завершается.
@@ -145,6 +203,24 @@ public class OrderNotFoundException extends RuntimeException {
 
 Пример: `throw new OrderProcessingException("Failed to save order " + id, e);`
 
+```java
+// Wrapping: SQLException → DataAccessException (Spring)
+@Transactional
+public void saveOrder(Order order) {
+    try {
+        jdbcTemplate.update("INSERT INTO orders ...", order.getId());
+    } catch (SQLException e) {
+        // Оборачиваем: сохраняем cause, меняем тип
+        throw new DataAccessException("Failed to save order " + order.getId(), e);
+    }
+}
+
+// В log-выводе:
+// DataAccessException: Failed to save order 123
+//   Caused by: SQLException: Connection refused
+//     Caused by: IOException: Network unreachable
+```
+
 
 ### 20. Почему не стоит глотать исключения (catch empty)
 
@@ -154,6 +230,23 @@ public class OrderNotFoundException extends RuntimeException {
 - **Нарушению контракта**: вызывающий код думает, что операция успешна.
 
 Если исключение действительно можно игнорировать, это нужно **явно задокументировать** комментарием и хотя бы залогировать на уровне `debug`/`warn`.
+
+```java
+// ❌ Плохо: пустой catch
+try {
+    file.delete();
+} catch (IOException e) {
+    // Исключение проглочено — баг!
+}
+
+// ✅ Хорошо: лог + документация
+try {
+    file.delete();
+} catch (IOException e) {
+    // Файл мог быть уже удалён другим потоком — не критично
+    log.debug("File already deleted: {}", file.getName(), e);
+}
+```
 
 
 ### 21. Что делает ключевое слово throws
@@ -228,6 +321,29 @@ catch (Exception e) { ... }              // самый общий
 ### 29. Что такое exception chaining
 
 **Exception chaining (цепочка исключений)** — это практика сохранения **причины** (`cause`) исключения при оборачивании. Новое исключение создаётся с передачей оригинала в конструктор (`new MyException("msg", cause)`) или через `initCause(cause)`. Это позволяет при диагностике пройти по цепочке `getCause()` до **корневой причины** (`root cause`), не теряя информацию о каждом уровне. `printStackTrace()` и логгеры автоматически отображают всю цепочку («Caused by: ...»).
+
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
+flowchart TD
+    A["OrderProcessingException<br/>(business layer)"]
+    B["DataAccessException<br/>(Spring layer)"]
+    C["SQLException<br/>(JDBC layer)"]
+    D["IOException<br/>(root cause)"]
+    
+    A -->|"cause"| B
+    B -->|"cause"| C
+    C -->|"cause"| D
+    
+    classDef business fill:#fdf1f1,stroke:#d49a9c,stroke-width:2px
+    classDef spring fill:#fdf4ec,stroke:#d4a582,stroke-width:2px
+    classDef jdbc fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px
+    classDef root fill:#f3faf1,stroke:#9dc49a,stroke-width:2px
+    
+    class A business
+    class B spring
+    class C jdbc
+    class D root
+```
 
 
 

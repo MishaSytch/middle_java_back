@@ -535,6 +535,7 @@ spec:
 
 **Архитектура Istio:**
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart TD
     subgraph Cluster[Kubernetes cluster]
         subgraph PodA[Pod A]
@@ -552,6 +553,18 @@ flowchart TD
     CP[Istio Control Plane]
     CP -.->|policies| EnvoyA
     CP -.->|policies| EnvoyB
+    classDef n0 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#ffffff,stroke:#d1d5db,stroke-width:2px,color:#1f2937
+    class AppA n0
+    class AppB n0
+    class EnvoyA n1
+    class EnvoyB n1
+    class CP n2
+    class PodA n3
+    class PodB n3
+    class Cluster n3
 ```
 
 **Когда нужен service mesh:**

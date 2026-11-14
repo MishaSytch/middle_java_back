@@ -5,6 +5,7 @@
 `HashMap` внутри представляет собой **массив bucket'ов** (корзин), где каждый элемент массива — это ссылка на связный список (или красно-чёрное дерево) узлов `Node<K,V>`. Каждый узел хранит хеш, ключ, значение и ссылку на следующий узел. При `put()` вычисляется хеш ключа, по нему определяется индекс в массиве, и элемент добавляется в соответствующую корзину. При достижении порога заполнения (`capacity × loadFactor`) происходит **resize (rehashing)** — создается новый массив вдвое большего размера, и все элементы перераспределяются.
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart TD
     subgraph Table[HashMap table — capacity 16]
         B0[Bucket 0]
@@ -20,6 +21,20 @@ flowchart TD
     B2
     B3
     B15
+    classDef n0 fill:#ffffff,stroke:#d1d5db,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    class Table n0
+    class B0 n1
+    class B1 n1
+    class B2 n1
+    class B3 n1
+    class B15 n1
+    class N1 n2
+    class N2 n2
+    class N3 n2
+    class N4 n3
 ```
 
 

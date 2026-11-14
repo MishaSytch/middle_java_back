@@ -67,12 +67,23 @@ public class RabbitConfig {
 ```
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart LR
     P[Producer] --> TX[(Topic Exchange)]
     TX -->|order.eu.created| Q1[Queue A]
     TX -->|order.eu.created| Q2[Queue B]
     Q1 --> C1[Consumer 1]
     Q2 --> C2[Consumer 2]
+    classDef n0 fill:#e5f7ed,stroke:#92c4ad,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    class P n0
+    class TX n1
+    class Q1 n2
+    class Q2 n2
+    class C1 n3
+    class C2 n3
 ```
 
 ### 3. Что такое routing key и как он работает
@@ -279,6 +290,7 @@ channel.basicQos(10);  // не более 10 неподтверждённых с
 - С малым prefetch (например, 1–10) брокер выдаёт по одному-двум сообщениям на консьюмера и сразу отдаёт следующим. Нагрузка распределяется равномерно.
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart TB
     subgraph "Без prefetch (или prefetch=250)"
         Q[Queue: 100 msgs] -->|100 сразу| C1[Consumer 1]
@@ -289,6 +301,16 @@ flowchart TB
         Q2 -->|1 msg| C4[Consumer 2]
         Q2 -->|1 msg| C5[Consumer 3]
     end
+    classDef n0 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#ffffff,stroke:#d1d5db,stroke-width:2px,color:#1f2937
+    class Q n0
+    class Q2 n0
+    class C1 n1
+    class C2 n1
+    class C3 n1
+    class C4 n1
+    class C5 n1
 ```
 
 **Типичная ошибка:** `prefetch=0` или очень большое значение → один консьюмер «съедает» всю очередь, остальные простаивают. Для балансировки между консьюмерами одной очереди — маленький prefetch.
@@ -453,6 +475,7 @@ RabbitMQ поддерживает кластеризацию: несколько
 
 **Архитектура кластера:**
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart TD
     subgraph Cluster
         N1[Node 1<br/>Leader]
@@ -465,6 +488,17 @@ flowchart TD
     C --> N2
     N1 <-->|replication| N2
     N2 <-->|replication| N3
+    classDef n0 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#e5f7ed,stroke:#92c4ad,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#fdeef0,stroke:#d49a9c,stroke-width:2px,color:#1f2937
+    classDef n4 fill:#ffffff,stroke:#d1d5db,stroke-width:2px,color:#1f2937
+    class N1 n0
+    class N2 n0
+    class N3 n0
+    class P n1
+    class C n2
+    class Cluster n4
 ```
 
 **Mirrored queue** (устаревший механизм, deprecated в новых версиях):
@@ -489,6 +523,7 @@ flowchart TD
 **Federation** — механизм, который позволяет связать очереди **разных** кластеров (или разных брокеров) так, что сообщения из «upstream» очереди автоматически пересылаются в «downstream» очередь.
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart LR
     subgraph "Cluster A"
         QA[Upstream Queue]
@@ -497,6 +532,10 @@ flowchart LR
         QB[Downstream Queue]
     end
     QA -->|federation link| QB
+    classDef n0 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    class QA n0
+    class QB n1
 ```
 
 **Как работает:**
@@ -618,19 +657,34 @@ rabbitTemplate.convertAndSend("orders.exchange", "order." + queueName, payload);
 **RPC (Remote Procedure Call) over RabbitMQ** — паттерн, когда клиент отправляет «запрос» в очередь, а сервер обрабатывает и возвращает «ответ» в reply-очередь.
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#f3f4f6' } } }%%
 sequenceDiagram
-    participant Client
+    participant Client as Client
     participant ReqExch as Request Exchange
     participant ReqQ as Request Queue
-    participant Server
+    participant Server as Server
     participant RplyExch as Reply Exchange
-    participant RplyQ as Reply Queue
-    Client ->> ReqExch: request (correlationId)
-    ReqExch ->> ReqQ:
-    ReqQ ->> Server:
-    Server ->> RplyExch: response (correlationId)
-    RplyExch ->> RplyQ:
-    RplyQ ->> Client:
+    participant RplyQ as Reply Queue (exclusive, auto-delete)
+
+    rect rgb(245,248,255)
+    Note over Client,ReqQ: 1. Request
+    Client->>ReqExch: publish (replyTo=RplyQ, correlationId)
+    ReqExch->>ReqQ: route by binding key
+    ReqQ->>Server: deliver message
+    end
+
+    rect rgb(255,252,240)
+    Note over Server,RplyExch: 2. Processing + Reply
+    Server->>Server: process request
+    Server->>RplyExch: publish response (correlationId)
+    RplyExch->>RplyQ: route to reply queue
+    end
+
+    rect rgb(245,255,245)
+    Note over RplyQ,Client: 3. Client receives response
+    RplyQ->>Client: deliver response
+    Client->>Client: match by correlationId
+    end
 ```
 
 **Как работает:**

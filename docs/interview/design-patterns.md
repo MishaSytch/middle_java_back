@@ -5,11 +5,20 @@
 Паттерны проектирования (design patterns) — это **повторно используемые, проверенные решения** типичных проблем, возникающих при проектировании программного обеспечения. Паттерн не является готовым кодом — это **шаблон, описание подхода**, который можно адаптировать к конкретной задаче. Паттерны помогают разработчикам общаться на общем языке («здесь нужен Strategy»), делают архитектуру более понятной, гибкой и поддерживаемой. Впервые систематизированы «бандой четырёх» (GoF — Gamma, Helm, Johnson, Vlissides) в книге 1994 года.
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart LR
     P[Паттерн проектирования]
     P --> C[Порождающие<br/>Creational]
     P --> S[Структурные<br/>Structural]
     P --> B[Поведенческие<br/>Behavioral]
+    classDef n0 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    class P n0
+    class C n1
+    class S n2
+    class B n3
 ```
 
 ### 2. Какие категории паттернов существуют
@@ -22,6 +31,7 @@ flowchart LR
 Отдельно выделяют **архитектурные паттерны** (MVC, CQRS, Event Sourcing, Saga) и **антипаттерны**.
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart TB
     subgraph C[Порождающие]
         C1[Singleton]
@@ -51,6 +61,36 @@ flowchart TB
         B9[Visitor]
         B10[Memento]
     end
+    classDef n0 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n4 fill:#ffffff,stroke:#d1d5db,stroke-width:2px,color:#1f2937
+    class C n4
+    class C1 n0
+    class C2 n0
+    class C3 n0
+    class C4 n0
+    class C5 n0
+    class S n4
+    class S1 n1
+    class S2 n1
+    class S3 n1
+    class S4 n1
+    class S5 n1
+    class S6 n1
+    class S7 n1
+    class B n4
+    class B1 n2
+    class B2 n2
+    class B3 n2
+    class B4 n2
+    class B5 n2
+    class B6 n2
+    class B7 n2
+    class B8 n2
+    class B9 n2
+    class B10 n2
 ```
 
 ### 3. Что такое Singleton
@@ -58,9 +98,16 @@ flowchart TB
 **Singleton (Одиночка)** — порождающий паттерн, гарантирующий, что у класса есть **ровно один экземпляр**, и предоставляющий **глобальную точку доступа** к нему. Реализуется через приватный конструктор, статическое поле для хранения экземпляра и статический метод `getInstance()`. Используется для ресурсов, которые должны быть единственными в системе: конфигурации, пулы соединений, кэши, логгеры.
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart LR
     C[Клиент] -->|getInstance| S[Singleton]
     S --> I[Единственный экземпляр]
+    classDef n0 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    class C n0
+    class S n1
+    class I n2
 ```
 
 ### 4. Как реализовать потокобезопасный Singleton
@@ -73,12 +120,25 @@ flowchart LR
 - **Enum Singleton**: самый надёжный — защищён от рефлексии, сериализации, потокобезопасен «из коробки». Рекомендуется Джошуа Блохом.
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart LR
     A[Eager initialization] --> S[Потокобезопасный Singleton]
     B[Synchronized getInstance] --> S
     C[Double-checked locking с volatile] --> S
     D[Holder class — Bill Pugh] --> S
     E[Enum Singleton] --> S
+    classDef n0 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef n4 fill:#fdf9e8,stroke:#d4c38a,stroke-width:2px,color:#1f2937
+    classDef n5 fill:#d9f99d,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    class A n0
+    class B n1
+    class C n2
+    class D n3
+    class E n4
+    class S n5
 ```
 
 ### 5. Что такое double-checked locking
@@ -100,6 +160,7 @@ public static Singleton getInstance() {
 Первая проверка избегает синхронизации в «горячем» пути, вторая — гонки при инициализации. **Критически важно** поле `volatile`: без него возможна публикация частично сконструированного объекта из-за переупорядочивания инструкций (до Java 5 DCL был сломан).
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart TD
     A[getInstance] --> B{instance == null?}
     B -->|нет| R[return instance]
@@ -108,6 +169,18 @@ flowchart TD
     D -->|нет| R
     D -->|да| E[создать Singleton]
     E --> R
+    classDef n0 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#fdf9e8,stroke:#d4c38a,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#fdf9e8,stroke:#d4c38a,stroke-width:2px,color:#1f2937
+    classDef n4 fill:#fdeef0,stroke:#d49a9c,stroke-width:2px,color:#1f2937
+    classDef n5 fill:#d9f99d,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    class A n0
+    class B n1
+    class C n2
+    class D n3
+    class E n4
+    class R n5
 ```
 
 ### 6. Каковы проблемы с Singleton
@@ -122,12 +195,23 @@ flowchart TD
 Современная рекомендация: вместо Singleton использовать **Dependency Injection** — контейнер сам управляет единственным экземпляром, а зависимости явно декларируются.
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart LR
     G[Глобальное состояние] --> P[Проблемы Singleton]
     T[Сложность тестирования] --> P
     S[Nарушение SRP] --> P
     D[Скрытые зависимости] --> P
     P --> R[Решение — Dependency Injection]
+    classDef n0 fill:#fdeef0,stroke:#d49a9c,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#fdf9e8,stroke:#d4c38a,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#d9f99d,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    class G n0
+    class T n0
+    class S n0
+    class D n0
+    class P n1
+    class R n3
 ```
 
 ### 7. В чём разница между Factory Method и Abstract Factory
@@ -138,6 +222,7 @@ flowchart LR
 Кратко: Factory Method — «один продукт, наследование», Abstract Factory — «семейство продуктов, композиция». Abstract Factory часто реализуется через несколько Factory Method.
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart TB
     subgraph FM[Factory Method — один продукт]
         C[Client] --> A[Product]
@@ -152,6 +237,28 @@ flowchart TB
         AFa --> CF1[WinFactory]
         AFa --> CF2[MacFactory]
     end
+    classDef n0 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef n4 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n5 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n6 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n7 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef n8 fill:#ffffff,stroke:#d1d5db,stroke-width:2px,color:#1f2937
+    class C n0
+    class A n1
+    class A1 n2
+    class A2 n2
+    class M n3
+    class FM n8
+    class AC n4
+    class AFa n5
+    class F1 n6
+    class F2 n6
+    class CF1 n7
+    class CF2 n7
+    class AF n8
 ```
 
 ### 8. Когда использовать Builder
@@ -166,10 +273,17 @@ flowchart TB
 Не стоит использовать Builder для простых объектов с 1–3 полями — это избыточно.
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart LR
     D[Director] --> B[Builder]
     B -->|size cheese| P[Pizza]
     B -->|build| P
+    classDef n0 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    class D n0
+    class B n1
+    class P n2
 ```
 
 ### 9. Что такое Prototype pattern
@@ -182,9 +296,16 @@ flowchart LR
 Важно различать **shallow copy** (по умолчанию `Object.clone()`) и **deep copy** (требует ручной реализации для вложенных объектов).
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart LR
     P[Prototype] -->|clone| C1[Копия 1]
     P -->|clone| C2[Копия 2]
+    classDef n0 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    class P n0
+    class C1 n1
+    class C2 n1
 ```
 
 ### 10. Когда использовать Strategy
@@ -198,11 +319,20 @@ flowchart LR
 Пример: различные стратегии скидок, алгоритмы сортировки, способы оплаты. В Java часто реализуется через интерфейс + несколько реализаций, которые внедряются через конструктор (композиция).
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart LR
     C[Context] --> S[Strategy]
     S --> S1[ConcreteStrategyA]
     S --> S2[ConcreteStrategyB]
     S --> S3[ConcreteStrategyC]
+    classDef n0 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    class C n0
+    class S n1
+    class S1 n2
+    class S2 n2
+    class S3 n2
 ```
 
 ### 11. Как реализован Observer в Java
@@ -216,10 +346,17 @@ flowchart LR
 Суть одна: субъект (subject) хранит коллекцию наблюдателей (observers) и при изменении состояния уведомляет их, вызывая общий метод.
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart LR
     S[Subject] -->|notify| O1[Observer 1]
     S -->|notify| O2[Observer 2]
     S -->|notify| O3[Observer 3]
+    classDef n0 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    class S n0
+    class O1 n1
+    class O2 n1
+    class O3 n1
 ```
 
 ### 12. В чём преимущество Decorator перед наследованием
@@ -233,10 +370,19 @@ flowchart LR
 Классический пример в Java — потоки ввода-вывода: `new BufferedReader(new InputStreamReader(new FileInputStream(...)))`.
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart LR
     C[Client] --> D2[Decorator B]
     D2 --> D1[Decorator A]
     D1 --> C1[ConcreteComponent]
+    classDef n0 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    class C n0
+    class D2 n1
+    class D1 n2
+    class C1 n3
 ```
 
 ### 13. В чём разница между State и Strategy
@@ -248,6 +394,7 @@ flowchart LR
 Кратко: в Strategy переходы управляются извне, в State — изнутри (самими состояниями).
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart TB
     subgraph STR[Strategy — выбор извне]
         SC[Client] -->|выбирает| SS[Strategy]
@@ -259,6 +406,21 @@ flowchart TB
         S1 -->|setState| S2[State B]
         S2 -->|setState| S3[State C]
     end
+    classDef n0 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef n4 fill:#ffffff,stroke:#d1d5db,stroke-width:2px,color:#1f2937
+    class SC n0
+    class SS n1
+    class SA n2
+    class SB n2
+    class CT n0
+    class S1 n3
+    class S2 n3
+    class S3 n3
+    class STR n4
+    class ST n4
 ```
 
 ### 14. Какие типы Proxy существуют
@@ -275,9 +437,16 @@ flowchart TB
 В Java Proxy реализуется через **JDK Dynamic Proxy** (для интерфейсов) или **CGLIB** (для классов); Spring AOP использует оба механизма.
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart LR
     C[Client] --> P[Proxy]
     P --> R[RealSubject]
+    classDef n0 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    class C n0
+    class P n1
+    class R n2
 ```
 
 ### 15. Что такое Iterator pattern
@@ -290,10 +459,17 @@ flowchart LR
 В Java это интерфейсы `java.util.Iterator` и `java.lang.Iterable`; все коллекции Collection Framework поддерживают итерацию, в том числе через `for-each`.
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart LR
     C[Client] -->|createIterator| I[Iterator]
     C -->|hasNext next| I
     I --> A[Aggregate Collection]
+    classDef n0 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    class C n0
+    class I n1
+    class A n2
 ```
 
 ### 16. Какие антипаттерны вы знаете
@@ -314,6 +490,7 @@ flowchart LR
 - **Feature Envy**: метод больше интересуется данными другого класса, чем своего.
 
 ```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart LR
     AP[Антипаттерн] --> G[God Object]
     AP --> S[Spaghetti Code]
@@ -322,6 +499,16 @@ flowchart LR
     AP --> BB[Big Ball of Mud]
     AP --> SS[Shotgun Surgery]
     AP --> FE[Feature Envy]
+    classDef n0 fill:#fdeef0,stroke:#d49a9c,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    class AP n1
+    class G n0
+    class S n0
+    class CP n0
+    class AN n0
+    class BB n0
+    class SS n0
+    class FE n0
 ```
 
 
