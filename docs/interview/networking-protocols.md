@@ -15,6 +15,48 @@
 | 4. Transport                              | Transport   | TCP, UDP             |
 | 5–7. Session / Presentation / Application | Application | HTTP, DNS, TLS, SMTP |
 
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#f3f4f6' } } }%%
+graph TD
+    subgraph OSI ["OSI-модель (7 уровней)"]
+        direction TB
+        L7["Application"]
+        L6["Presentation"]
+        L5["Session"]
+        L4["Transport (TCP/UDP)"]
+        L3["Network (IP, ICMP)"]
+        L2["Data Link (ARP, MAC)"]
+        L1["Physical (Ethernet, Wi-Fi)"]
+        L7 --> L6 --> L5 --> L4 --> L3 --> L2 --> L1
+    end
+    subgraph TCP ["TCP/IP (4 уровня)"]
+        direction TB
+        T4["Application (HTTP, DNS)"]
+        T3["Transport (TCP, UDP)"]
+        T2["Internet (IP, ICMP, BGP)"]
+        T1["Link (ARP, MAC)"]
+        T4 --> T3 --> T2 --> T1
+    end
+    classDef n0 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#fdf9e8,stroke:#d4c38a,stroke-width:2px,color:#1f2937
+    classDef n4 fill:#ffffff,stroke:#d1d5db,stroke-width:2px,color:#1f2937
+    class L7 n0
+    class L6 n0
+    class L5 n0
+    class L4 n1
+    class L3 n2
+    class L2 n3
+    class L1 n3
+    class T4 n0
+    class T3 n1
+    class T2 n2
+    class T1 n3
+    class OSI n4
+    class TCP n4
+```
+
 **На собеседовании важно:** понимать, на каком уровне живёт каждый протокол (DNS — Application, IP — Network, TCP — Transport) и где решаются конкретные проблемы (маршрутизация — Network, доставка — Transport, шифрование — Presentation/Application).
 
 ### 2. TCP vs UDP: в чём разница и когда что использовать
@@ -54,6 +96,37 @@
 - `CLOSE_WAIT` — сервер не закрыл — признак утечки соединений
 - `FIN_WAIT_2` — ожидаем FIN от сервера
 
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#f3f4f6' } } }%%
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+
+    rect rgb(245,248,255)
+    Note over C,S: 1. Three-way handshake (установка)
+    C->>S: SYN (seq=x)
+    S->>C: SYN-ACK (seq=y, ack=x+1)
+    C->>S: ACK (ack=y+1)
+    Note over C,S: ESTABLISHED
+    end
+
+    rect rgb(255,252,240)
+    Note over C,S: 2. Обмен данными
+    C->>S: data
+    S->>C: data
+    end
+
+    rect rgb(245,255,245)
+    Note over C,S: 3. Four-way teardown (закрытие)
+    C->>S: FIN (хочу закрыть)
+    S->>C: ACK
+    S->>S: дописывает данные
+    S->>C: FIN
+    C->>S: ACK
+    Note over C,S: TIME_WAIT (~60s) → CLOSED
+    end
+```
+
 ```bash
 ss -tan | head -20   # кто и на каком состоянии
 # CLOSE_WAIT в больших количествах — у кода не закрываются соединения
@@ -68,6 +141,38 @@ TLS (Transport Layer Security) — шифрование канала повер�
 2. `ServerHello` + `Certificate` — сервер выбирает cipher, шлёт сертификат
 3. `Finished` от сервера — клиент проверяет подпись и шлёт `Finished`
 4. Дальше — **шифрованный** обмен данными (симметричное шифрование, ключи согласованы через ECDHE)
+
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#f3f4f6' } } }%%
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+
+    rect rgb(245,248,255)
+    Note over C,S: 1. ClientHello
+    C->>S: ClientHello (cipher suites, random, SNI)
+    end
+
+    rect rgb(255,252,240)
+    Note over C,S: 2. ServerHello + Certificate
+    S->>C: ServerHello (cipher choice, random)
+    S->>C: Certificate (X.509, CA chain)
+    S->>C: Finished (подпись)
+    end
+
+    rect rgb(245,255,245)
+    Note over C,S: 3. Client проверяет и завершает
+    C->>C: проверка сертификата (CA chain)
+    C->>C: ECDHE — согласование ключей
+    C->>S: Finished (подпись)
+    end
+
+    rect rgb(243,246,255)
+    Note over C,S: 4. Шифрованный обмен
+    C->>S: encrypted data
+    S->>C: encrypted data
+    end
+```
 
 **Ключевые концепции:**
 - **Certificate** — X.509, подписан CA; браузер проверяет цепочку до trusted root
@@ -140,6 +245,45 @@ TLS (Transport Layer Security) — шифрование канала повер�
 5. NS → ответ A-записью
 6. Resolver кэширует ответ (TTL) → клиенту
 
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#f3f4f6' } } }%%
+sequenceDiagram
+    participant Cl as Client
+    participant R as Resolver (local)
+    participant Root as Root (.)
+    participant TLD as TLD (.com)
+    participant NS as Authoritative NS
+
+    rect rgb(245,248,255)
+    Note over Cl,R: 1. Клиент → Resolver
+    Cl->>R: example.com (A)
+    end
+
+    rect rgb(255,252,240)
+    Note over R,Root: 2. Resolver → Root
+    R->>Root: example.com (A)
+    Root-->>R: referral: TLD .com
+    end
+
+    rect rgb(245,255,245)
+    Note over R,TLD: 3. Resolver → TLD
+    R->>TLD: example.com (A)
+    TLD-->>R: referral: NS ns1.example-dns.net
+    end
+
+    rect rgb(243,246,255)
+    Note over R,NS: 4. Resolver → Authoritative NS
+    R->>NS: example.com (A)
+    NS-->>R: A: 93.184.216.34 (TTL=300)
+    end
+
+    rect rgb(245,248,255)
+    Note over Cl,R: 5. Ответ клиенту
+    R->>Cl: A: 93.184.216.34
+    Note over R: кэш на TTL=300s
+    end
+```
+
 **TTL** (Time To Live) — сколько секунд ответ живёт в кэше. Меньше TTL → быстрее обновление, но больше нагрузка на DNS.
 
 ```bash
@@ -171,6 +315,44 @@ host -t MX example.com     # почтовый сервер
 - `192.168.0.0/16`
 
 **NAT** (Network Address Translation) — преобразование внутренних IP в внешний (и обратно), чтобы один публичный IP обслуживал множество внутренних машин. В облаках (AWS VPC, GCP VPC) подсети — основа сети.
+
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#f3f4f6' } } }%%
+graph LR
+    subgraph IPv4 ["IPv4 (32 бита)"]
+        direction LR
+        Net["Network bits (сеть)"]
+        Host["Host bits (хост)"]
+    end
+    subgraph CIDR ["Примеры CIDR"]
+        C24["/24 → 255.255.255.0 → 256 addr"]
+        C16["/16 → 255.255.0.0 → 65536 addr"]
+        C8["/8 → 255.0.0.0 → 16M addr"]
+    end
+    subgraph Private ["Private (RFC 1918)"]
+        P1["10.0.0.0/8"]
+        P2["172.16.0.0/12"]
+        P3["192.168.0.0/16"]
+    end
+    IPv4 --> CIDR
+    IPv4 --> Private
+    classDef n0 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#fdf9e8,stroke:#d4c38a,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#fdeef0,stroke:#d49a9c,stroke-width:2px,color:#1f2937
+    classDef n4 fill:#ffffff,stroke:#d1d5db,stroke-width:2px,color:#1f2937
+    class Net n0
+    class Host n0
+    class C24 n1
+    class C16 n1
+    class C8 n1
+    class P1 n3
+    class P2 n3
+    class P3 n3
+    class IPv4 n4
+    class CIDR n4
+    class Private n4
+```
 
 ### 8. Что такое HTTP status codes и как их группировать
 
@@ -244,6 +426,47 @@ server {
 - Rate limiting, WAF
 - Health checks и failover
 
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#f3f4f6' } } }%%
+graph LR
+    subgraph Clients ["Клиенты"]
+        C1["Browser / App"]
+    end
+    subgraph Proxy ["Reverse Proxy (nginx)"]
+        TLS["TLS termination"]
+        LB["Load balancing"]
+        Cache["Cache"]
+        WAF["WAF / Rate limit"]
+    end
+    subgraph Backends ["Backend-серверы"]
+        B1["App 1 :8080"]
+        B2["App 2 :8080"]
+        B3["App 3 :8080"]
+    end
+    C1 -->|HTTPS| TLS
+    TLS --> LB
+    LB --> B1
+    LB --> B2
+    LB --> B3
+    LB --> Cache
+    LB --> WAF
+    classDef n0 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#ffffff,stroke:#d1d5db,stroke-width:2px,color:#1f2937
+    class C1 n0
+    class TLS n1
+    class LB n1
+    class Cache n1
+    class WAF n1
+    class B1 n2
+    class B2 n2
+    class B3 n2
+    class Clients n3
+    class Proxy n3
+    class Backends n3
+```
+
 ### 10. Что такое load balancing и алгоритмы распределения
 
 **Load balancing** — распределение входящего трафика между несколькими инстансами приложения, чтобы:
@@ -263,6 +486,40 @@ server {
 - **Consistent hashing** — стабильное распределение (минимум перемещений при добавлении/удалении ноды)
 
 **Health checks** — балансировщик периодически опрашивает инстансы (`/actuator/health`) и убирает из пула те, что не отвечают. **Session stickiness** (sticky session) — один клиент всегда на одном инстансе (проблема: нарушает stateless-принцип, лучше external session store).
+
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#f3f4f6' } } }%%
+graph TD
+    subgraph LB ["Load Balancer"]
+        HC["Health checks (/health)"]
+        Algo["Algorithm (round-robin / least conn / IP hash)"]
+    end
+    subgraph Inst ["Инстансы"]
+        I1["Instance 1"]
+        I2["Instance 2"]
+        I3["Instance 3 (down)"]
+    end
+    Client["Client"]
+    Client -->|HTTP| LB
+    HC -.->|probe| I1
+    HC -.->|probe| I2
+    HC -.->|probe X| I3
+    Algo --> I1
+    Algo --> I2
+    classDef n0 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#fdeef0,stroke:#d49a9c,stroke-width:2px,color:#1f2937
+    classDef n4 fill:#ffffff,stroke:#d1d5db,stroke-width:2px,color:#1f2937
+    class Client n0
+    class HC n1
+    class Algo n1
+    class I1 n2
+    class I2 n2
+    class I3 n3
+    class LB n4
+    class Inst n4
+```
 
 ### 11. Что такое firewall и сетевая безопасность
 
@@ -365,6 +622,34 @@ server {
 
 **Примеры:** CloudFlare, Akamai, AWS CloudFront, Fastly.
 
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#f3f4f6' } } }%%
+graph LR
+    User["User"]
+    subgraph Edge ["CDN Edge (closest)"]
+        Cache["Cache (hit/miss)"]
+    end
+    Origin["Origin Server"]
+    GeoDNS["GeoDNS"]
+    User -->|1. DNS| GeoDNS
+    GeoDNS -->|2. nearest edge IP| User
+    User -->|3. request| Cache
+    Cache -->|hit: 4a| User
+    Cache -->|miss: 4b| Origin
+    Origin -->|5. response + cache| Cache
+    Cache -->|6. response| User
+    classDef n0 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#fdf9e8,stroke:#d4c38a,stroke-width:2px,color:#1f2937
+    classDef n4 fill:#ffffff,stroke:#d1d5db,stroke-width:2px,color:#1f2937
+    class User n0
+    class GeoDNS n3
+    class Cache n1
+    class Origin n2
+    class Edge n4
+```
+
 ### 14. Что такое DDoS и как от него защищаться
 
 **DDoS** (Distributed Denial of Service) — атака, когда множество ботов/компрометированных машин шлют трафик на цель, чтобы её «положить».
@@ -453,6 +738,36 @@ public class WsConfig implements WebSocketMessageBrokerConfigurer {
 - **REST** — request/response (клиент инициирует)
 - **WebSocket** — full-duplex (сервер может сам слать)
 
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#f3f4f6' } } }%%
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+
+    rect rgb(245,248,255)
+    Note over C,S: 1. HTTP Upgrade (handshake)
+    C->>S: GET /ws, Upgrade: websocket, Key: ...
+    S->>C: 101 Switching Protocols, Accept: ...
+    end
+
+    rect rgb(255,252,240)
+    Note over C,S: 2. Bidirectional frames (не HTTP)
+    C->>S: text frame: "hello"
+    S->>C: text frame: "welcome"
+    end
+
+    rect rgb(245,255,245)
+    Note over C,S: 3. Server-initiated push
+    S->>C: text frame: "notification: order #123"
+    end
+
+    rect rgb(255,243,243)
+    Note over C,S: 4. Close
+    C->>S: close frame (code=1000)
+    S->>C: close frame (code=1000)
+    end
+```
+
 **Проблемы:**
 - Stateful (сложнее масштабировать — нужен sticky session или broadcast через Redis pub/sub)
 - Не кэшируется
@@ -472,6 +787,43 @@ public class WsConfig implements WebSocketMessageBrokerConfigurer {
 - **Versioning** — `/api/v1/...` vs `/api/v2/...`
 
 **Примеры:** AWS API Gateway, Kong, Apigee, Zuul (Netflix), Spring Cloud Gateway.
+
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#f3f4f6' } } }%%
+graph LR
+    Client["Client"]
+    subgraph GW ["API Gateway"]
+        Auth["Auth (JWT/OAuth2)"]
+        RateLimit["Rate limiting"]
+        Route["Routing (path → service)"]
+        Transform["Transform (REST→gRPC)"]
+        CB["Circuit breaker"]
+    end
+    subgraph Svcs ["Микросервисы"]
+        S1["Order Service"]
+        S2["User Service"]
+        S3["Payment Service"]
+    end
+    Client -->|HTTPS| GW
+    GW --> S1
+    GW --> S2
+    GW --> S3
+    classDef n0 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#ffffff,stroke:#d1d5db,stroke-width:2px,color:#1f2937
+    class Client n0
+    class Auth n1
+    class RateLimit n1
+    class Route n1
+    class Transform n1
+    class CB n1
+    class S1 n2
+    class S2 n2
+    class S3 n2
+    class GW n3
+    class Svcs n3
+```
 
 **Spring Cloud Gateway (reactive):**
 ```java
@@ -497,6 +849,40 @@ public RouteLocator routes(RouteLocatorBuilder builder) {
 3. **CertificateRequest** (сервер просит сертификат клиента)
 4. Клиент → Certificate (клиент) + CertificateVerify
 5. Дальше — шифрованный обмен
+
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#f3f4f6' } } }%%
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+
+    rect rgb(245,248,255)
+    Note over C,S: 1. ClientHello
+    C->>S: ClientHello (cipher suites, SNI)
+    end
+
+    rect rgb(255,252,240)
+    Note over C,S: 2. ServerHello + Certificate
+    S->>C: ServerHello
+    S->>C: Certificate (server cert)
+    S->>C: CertificateRequest (просит cert клиента)
+    S->>C: Finished
+    end
+
+    rect rgb(245,255,245)
+    Note over C,S: 3. Client Certificate (mTLS отличие)
+    C->>C: проверка server cert
+    C->>S: Certificate (client cert)
+    C->>S: CertificateVerify (подпись)
+    C->>S: Finished
+    end
+
+    rect rgb(243,246,255)
+    Note over C,S: 4. Шифрованный обмен
+    C->>S: encrypted data
+    S->>C: encrypted data
+    end
+```
 
 **Зачем mTLS:**
 - **Zero Trust** — сервисы в микросервисной архитектуре удостоверяют друг друга
@@ -712,5 +1098,193 @@ spec:
 - **Service mesh** (Istio, Linkerd) — mTLS + policies
 - **ZTNA** — CloudFlare Access, Zscaler, Palo Alto Prisma
 - **IAM** — AWS IAM, Okta, Keycloak
+
+### 23. Что такое QUIC и в чём его преимущества
+
+**QUIC** (Quick UDP Internet Connection) — современный транспортный протокол (RFC 9000), работающий **поверх UDP**. Сочетает в себе возможности TCP (надёжная доставка, порядок, контроль потока) и шифрование TLS 1.3 **в одном стеке**, без отдельных handshakes.
+
+**Ключевые особенности:**
+- **1-RTT handshake** (TLS + transport в одном обмене); для возвращающихся клиентов — **0-RTT** (data сразу).
+- **Multiplexing** — множество независимых **streams** в одном соединении; потеря пакета в одном stream **не блокирует** другие (нет head-of-line blocking на транспортном уровне).
+- **Built-in TLS 1.3** — шифрование с первого пакета (в отличие от TLS поверх TCP, где handshake идёт открытым текстом).
+- **Connection migration** — смена IP/сети (Wi-Fi → LTE) **не рвёт** соединение (connection ID ≠ IP:port).
+- **Congestion control** — на уровне приложения (каждый реализует свой алгоритм: Cubic, BBR).
+
+**Противопоставление TCP:**
+| Критерий | TCP + TLS | QUIC |
+|----------|-----------|------|
+| Transport | TCP (reliable, ordered) | UDP (best-effort) |
+| Handshake | TCP 3-way + TLS (2-RTT) | 1-RTT (0-RTT return) |
+| Head-of-line blocking | да (один stream) | нет (множество streams) |
+| Encryption | после handshake | с первого пакета |
+| Network changes | connection break | migration (connection ID) |
+| Port | 80/443 | 443 (обычно) |
+
+**Примеры использования:**
+- **HTTP/3** — HTTP поверх QUIC (по умолчанию в Chrome на HTTPS с 2023)
+- **gRPC over QUIC** (экспериментально)
+- **CDN/edge** — CloudFlare, AWS CloudFront
+
+**Проблемы:**
+- Некоторые firewalls блокируют UDP (QoS, corporate proxies)
+- Меньше зрелости в инструментах (Wireshark, tcpdump хуже читают QUIC)
+- Конгестия на уровне приложения — сложнее дебажить
+
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#f3f4f6' } } }%%
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+
+    rect rgb(245,248,255)
+    Note over C,S: 1. QUIC 1-RTT handshake (новый клиент)
+    C->>S: Initial (ClientHello + TLS 1.3, conn_id)
+    S->>C: Initial (ServerHello + TLS 1.3, cert)
+    C->>C: проверка cert, ECDHE
+    C->>S: 1-RTT data (шифровано)
+    end
+
+    rect rgb(255,252,240)
+    Note over C,S: 2. 0-RTT (возвращающийся клиент)
+    C->>S: 0-RTT data (шифровано, early data)
+    S->>C: response
+    end
+
+    rect rgb(245,255,245)
+    Note over C,S: 3. Connection migration
+    C->>C: смена сети (Wi-Fi → LTE, новый IP)
+    C->>S: data (тот же conn_id, новый IP)
+    S->>C: response (тот же conn_id)
+    Note over C,S: соединение не разорвано
+    end
+```
+
+### 24. Что такое HTTP/3 и чем он отличается от HTTP/2
+
+**HTTP/3** — третья версия HTTP, работающая **поверх QUIC** (а не TCP, как HTTP/1.1 и HTTP/2). Основные отличия от HTTP/2:
+
+**Что изменено:**
+- **Транспорт**: QUIC (UDP) вместо TCP → нет head-of-line blocking на транспортном уровне.
+- **Handshake**: 1-RTT (TLS + transport вместе) vs 2-RTT (TCP + TLS по отдельности).
+- **Multiplexing**: на уровне QUIC streams (не TCP) → потеря пакета не блокирует другие запросы.
+- **Connection migration**: смена IP не рвёт соединение (важно для мобильных).
+- **Encrypted frames**: заголовки и данные шифруются с первого пакета (в HTTP/2 TLS шифрует после handshake, но сам TCP-слой открытый).
+
+**Сохранено от HTTP/2:**
+- Binary framing
+- Header compression (HPACK)
+- Multiplexing (но на новом уровне)
+- Priority
+
+**Когда HTTP/3:**
+- Мобильные клиенты (смена сети Wi-Fi ↔ LTE)
+- Высоко-латентные сети (потери пакетов)
+- CDN/edge (быстрее handshake)
+
+**Практика:**
+- Бrowsers: Chrome (default на HTTPS), Firefox (default), Safari (experimental)
+- Серверы: nginx 1.25+, Caddy, Envoy, AWS CloudFront
+- **Fallback**: если QUIC недоступен (firewall блокирует UDP) → автоматически переход на HTTP/2 (TCP)
+
+```bash
+# Проверить поддерживает ли сайт HTTP/3
+curl --http3 https://example.com
+# или в браузере: chrome://net-internals#hsts
+```
+
+### 25. Что такое WebRTC и как он работает
+
+**WebRTC** (Web Real-Time Communication) — набор браузерных API для **real-time** передачи аудио, видео и данных между браузерами (peer-to-peer) без плагинов. Работает на трёх уровнях:
+
+**Протокольный стек:**
+- **Signaling** (не входит в WebRTC) — обмен SDP offer/answer через WebSocket, HTTP, XMPP. Устанавливает параметры сессии.
+- **ICE** (Interactive Connectivity Establishment) — поиск лучшего пути доставки медиа (host, srflx, relay). Использует STUN (рефлексивные адреса) и TURN (реле-сервер).
+- **DTLS** — шифрование канала (аналог TLS, но на UDP).
+- **RTP/RTCP** — транспорт медиа (Real-time Transport Protocol). RTP — пакеты медиа, RTCP — статистика и контроль.
+- **SRTP** — шифрованные RTP (после DTLS handshake).
+- **DataChannel** — произвольные данные поверх DTLS (reliable/unreliable, ordered/unordered).
+
+**SDP** (Session Description Protocol) — текстовый формат описания сессии: какие кодеки, порты, IP, ICE candidates.
+
+**Кодирование:**
+- **Видео**: H.264 (AVC), VP8, VP9, AV1
+- **Аудио**: Opus (по умолчанию), G.711
+- **Данные**: protobuf, JSON, raw bytes (DataChannel)
+
+**ICE candidates (типы):**
+- **host** — локальный IP (192.168.x.x)
+- **srflx** (server reflexive) — через STUN (публичный IP)
+- **relay** — через TURN (реле-сервер, когда NAT симметричный)
+
+**Проблемы WebRTC:**
+- **NAT traversal** — симметричный NAT требует TURN (иначе не соединятся)
+- **Codec negotiation** — несовместимость кодеков (пример: Pion v4 не выдаёт `/2` в rtpmap для Opus stereo)
+- **Connection migration** — смена сети рвёт DTLS/RTP (в отличие от QUIC)
+- **Latency** — realtime требования (audio <150ms, video <300ms)
+
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#f3f4f6' } } }%%
+sequenceDiagram
+    participant A as Peer A (offerer)
+    participant S as Signaling (WS)
+    participant B as Peer B (answerer)
+    participant ST as STUN
+    participant TU as TURN
+
+    rect rgb(245,248,255)
+    Note over A,B: 1. SDP offer/answer (через signaling)
+    A->>S: SDP offer (codecs, ICE ufrag/pwd)
+    S->>B: relay offer
+    B->>B: createAnswer()
+    B->>S: SDP answer
+    S->>A: relay answer
+    end
+
+    rect rgb(255,252,240)
+    Note over A,ST: 2. ICE gathering
+    A->>ST: STUN request
+    ST-->>A: reflexive IP
+    A->>B: ICE candidate (host + srflx)
+    B->>A: ICE candidate
+    end
+
+    rect rgb(245,255,245)
+    Note over A,B: 3. ICE pair selection
+    A->>B: connectivity check (UDP)
+    B-->>A: success
+    A->>A: best pair selected
+    end
+
+    rect rgb(243,246,255)
+    Note over A,B: 4. DTLS handshake
+    A->>B: DTLS ClientHello
+    B->>A: DTLS ServerHello + cert
+    A->>B: DTLS Finished
+    end
+
+    rect rgb(245,248,255)
+    Note over A,B: 5. Media flow (SRTP)
+    A->>B: SRTP (video H.264)
+    B->>A: SRTP (audio Opus)
+    A->>B: RTCP (stats)
+    end
+```
+
+**Когда WebRTC:**
+- Видеозвонки, видеоконференции
+- Realtime chat (голос, видео)
+- Multiplayer-игры (low latency)
+- File sharing peer-to-peer
+- Remote desktop / screen sharing (scrcpy-like)
+
+**Противопоставление WebSocket:**
+- **WebSocket** — full-duplex, reliable, ordered (для команд, событий)
+- **WebRTC DataChannel** — reliable/unreliable, ordered/unordered (для медиа, realtime данных)
+- **WebRTC RTP** — media-only, low latency, loss-tolerant
+
+**Примеры реализации:**
+- Браузеры: Chrome, Firefox, Safari (нативная поддержка)
+- Серверы: Pion (Go), mediasoup (Node.js), Janus (C)
+- Cloud: AWS IVS, LiveKit, Daily, Agora
 
 
