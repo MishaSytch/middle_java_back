@@ -540,3 +540,124 @@ public class GlobalExceptionHandler {
 - HSTS, CSP, X-Content-Type-Options: nosniff
 - API gateway: rate limiting, auth, IP allowlist
 - Secrets: не в headers client-side, не в logs
+
+### 16. API design review: как провести ревью API-дизайна
+**Checklist:**
+1. **Naming** — консистентные имена (camelCase, snake_case)
+2. **URL structure** — RESTful (resource-oriented)
+3. **HTTP methods** — правильные методы (GET, POST, PUT, PATCH, DELETE)
+4. **Status codes** — правильные коды (200, 201, 400, 404, 500)
+5. **Error handling** — структурированные ошибки
+6. **Pagination** — для списков
+7. **Versioning** — стратегия версионирования
+8. **Security** — auth, rate limiting
+9. **Documentation** — OpenAPI/AsyncAPI
+10. **Testing** — contract tests, E2E tests
+
+**Process:**
+1. **Design** — дизайнер API
+2. **Review** — ревью (team)
+3. **Iterate** — доработка
+4. **Approve** — одобрение
+5. **Implement** — реализация
+
+### 17. API style guide: как написать стиль-гайд для API
+**Структура:**
+```markdown
+# API Style Guide
+
+## 1. Naming
+- Resource: `orders` (plural, lowercase)
+- Field: `orderId` (camelCase)
+- Enum: `PENDING`, `APPROVED` (UPPER_CASE)
+
+## 2. URL Structure
+- List: `GET /orders`
+- Item: `GET /orders/{id}`
+- Create: `POST /orders`
+- Update: `PUT /orders/{id}`
+- Delete: `DELETE /orders/{id}`
+
+## 3. HTTP Methods
+- GET: read
+- POST: create
+- PUT: update (full)
+- PATCH: update (partial)
+- DELETE: delete
+
+## 4. Status Codes
+- 200: OK
+- 201: Created
+- 400: Bad Request
+- 401: Unauthorized
+- 403: Forbidden
+- 404: Not Found
+- 500: Internal Server Error
+
+## 5. Error Handling
+- Structured error: `{ "error": { "code": "NOT_FOUND", "message": "..." } }`
+
+## 6. Pagination
+- `?page=1&size=20&sort=createdAt,desc`
+
+## 7. Versioning
+- `GET /v1/orders` (URI-based)
+```
+
+### 18. API governance: как управлять API в организации
+**Компоненты:**
+1. **API catalog** — список всех API
+2. **API owner** — владелец API
+3. **API lifecycle** — lifecycle (create, deploy, deprecate, retire)
+4. **API standards** — стандарты (style guide)
+5. **API testing** — тестирование (contract, E2E)
+6. **API monitoring** — мониторинг (metrics, logs)
+
+**Инструменты:**
+- **API catalog** — Swagger Hub, ReadMe
+- **API gateway** — Kong, AWS API Gateway
+- **API testing** — Pact, Spring Cloud Contract
+- **API monitoring** — Prometheus, Grafana
+
+### 19. API monetization: как монетизировать API
+**Модели:**
+1. **Freemium** — базовый бесплатно, premium платно
+2. **Usage-based** — оплата по использованию (requests, data)
+3. **Subscription** — подписка (monthly, yearly)
+4. **Enterprise** — enterprise-лицензия
+
+**Инструменты:**
+- **Rate limiting** — ограничение запросов
+- **Quota management** — управление квотами
+- **Billing** — биллинг (Stripe, AWS)
+- **Usage tracking** — трекинг использования
+
+**Пример:**
+```
+Free: 100 requests/day
+Pro: 10,000 requests/day ($10/month)
+Enterprise: unlimited ($1000/month)
+```
+
+### 20. API deprecation: как корректно депрекатить API
+**Process:**
+1. **Announce** — объявить (changelog, email)
+2. **Mark** — пометить (deprecation header)
+3. **Notify** — уведомить (warnings)
+4. **Migrate** — помочь мигрировать
+5. **Retire** — удалить
+
+**Deprecation header:**
+```
+Deprecation: true
+Sunset: Sat, 01 Jan 2025 00:00:00 GMT
+Link: <https://api.example.com/v2/orders>; rel="successor-version"
+```
+
+**Timeline:**
+```
+Month 1: Announce (deprecation header)
+Month 2-3: Notify (warnings)
+Month 4: Migrate (help)
+Month 5: Retire (remove)
+```

@@ -415,3 +415,627 @@ terraform destroy    # уничтожить всё (осторожно!)
 - **Modules** для **переиспользования** (VPC, RDS, S3).
 - **Terraform Cloud / Atlas** для **управления** **state** и **plan/apply** в **UI**.
 - **Never** **commit** **secrets** (использовать **AWS Secrets Manager** / **HashiCorp Vault**).
+
+### 9. Что такое 12-factor app и как его применить в Java
+
+**12-Factor App** = методология для построения **cloud-native** приложений (Heroku, 2011).
+
+| # | Factor | Суть | Java-пример |
+|---|--------|------|-------------|
+| 1 | **Codebase** | 1 codebase → N deployments | 1 repo → dev/staging/prod (env vars) |
+| 2 | **Dependencies** | Явные зависимости | `pom.xml` (Maven) — все зависимости объявлены |
+| 3 | **Config** | Config в env vars, не в коде | `SPRING_PROFILES_ACTIVE=prod`, `DB_URL=...` |
+| 4 | **Backing services** | Services = attached resources | DB, Redis, Kafka — через env vars (не hardcode) |
+| 5 | **Build, release, run** | Строго разделить | Maven build → Docker image → Kubernetes run |
+| 6 | **Processes** | Stateless processes | Приложение не хранит session в памяти (Redis) |
+| 7 | **Port binding** | Порты через env | `SERVER_PORT=8080` (не hardcode) |
+| 8 | **Concurrency** | Масштабирование через процессы | `replicas: 3` в K8s (не thread pool в 1 process) |
+| 9 | **Disposability** | Быстрый start/stop | `@PreDestroy` — graceful shutdown |
+| 10 | **Dev/prod parity** | Dev ≈ prod | Docker в dev (как в prod) |
+| 11 | **Logs** | Logs = stream | `System.out` → stdout (не файл) |
+| 12 | **Admin processes** | Админка = один-off process | `java -jar app.jar --migrate` (не отдельный сервис) |
+
+**Spring Boot 12-factor**:
+```yaml
+# application.yml (12-factor compliant):
+server:
+  port: ${SERVER_PORT:8080}  # Factor 7: port binding
+
+spring:
+  datasource:
+    url: ${DB_URL}            # Factor 4: backing services
+    username: ${DB_USER}      # Factor 3: config in env
+    password: ${DB_PASS}
+
+logging:
+  file:                        # Factor 11: logs = stream (stdout)
+  console:
+    include-startup: true
+```
+
+**K8s 12-factor**:
+```yaml
+# deployment.yaml
+spec:
+  replicas: 3  # Factor 8: concurrency via processes
+  template:
+    spec:
+      containers:
+      - name: app
+        image: myapp:1.0  # Factor 5: build → image → run
+        ports:
+        - containerPort: 8080  # Factor 7
+        env:  # Factor 3: config in env
+        - name: DB_URL
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: url
+        - name: SPRING_PROFILES_ACTIVE
+          value: "prod"
+```
+
+**Вывод**: **12-factor** = 12 принципов **cloud-native** (codebase, dependencies, config, services, build/release/run, processes, port binding, concurrency, disposability, dev/prod parity, logs, admin). **Spring Boot**: env vars, stdout logging, stateless. **K8s**: replicas, env, secrets.
+
+### 10. Что такое service discovery и как он работает
+
+**Service discovery** = механизм **нахождения** **microservices** (IP + port) в **dynamic** окружении (K8s, cloud).
+
+**Типы**:
+1. **Client-side**: **client** спрашивает **registry** → **IP:port** → **connect**.
+2. **Server-side**: **load balancer** спрашивает **registry** → **proxy** **traffic**.
+
+**Client-side (Eureka, Consul)**:
+```
+Client → Eureka (registry) → [service-a: 10.0.0.1:8080]
+Client → service-a (10.0.0.1:8080)
+```
+
+**Server-side (K8s Service, NGINX)**:
+```
+Client → K8s Service (ClusterIP: 10.96.0.1:8080)
+K8s Service → Pod (10.244.0.1:8080)
+```
+
+**Eureka (Netflix, Spring Cloud)**:
+```java
+// Eureka Client:
+@GetToUrl("/api/orders")
+@FeignClient(name = "orders-service")
+public interface OrdersClient {
+  @GetMapping("/orders/{id}")
+  Order getOrder(@PathVariable Long id);
+}
+```
+- **Registry**: **Eureka Server** (хранит **service** → **IP:port**).
+- **Client**: **Feign** (declarative **HTTP client**) → **Eureka** (discovery).
+
+**Consul (HashiCorp)**:
+- **Service mesh**: **sidecar** (например: **Envoy**) → **proxy** **traffic**.
+- **Health check**: **HTTP**/**TCP**/**gRPC** (каждые **10 сек**).
+- **Service discovery**: **DNS** (например: **orders-service.service.consul**).
+
+**K8s Service Discovery**:
+- **DNS**: **orders-service** (name) → **ClusterIP** (например: **10.96.0.1**).
+- **Service**: **ClusterIP** → **Pod** (например: **10.244.0.1:8080**).
+- **Health check**: **readiness probe** (например: **/actuator/health**).
+
+**Вывод**: **Service discovery** = **нахождение** **microservices** (IP + port). **Client-side** (Eureka, Consul): **client** спрашивает **registry**. **Server-side** (K8s Service, NGINX): **load balancer** спрашивает **registry**. **K8s**: **DNS** (service name) → **ClusterIP** → **Pod**.
+
+### 11. Что такое circuit breaker и как его настроить
+
+**Circuit breaker** = паттерн **защиты** от **cascade failure** (когда **1** **service** **падает** → **все** **services** **падают**).
+
+**Состояния**:
+1. **Closed** (норма): **requests** **pass** → **service**.
+2. **Open** (сработал): **requests** **fail fast** (не **pass**).
+3. **Half-open** (testing): **N** **requests** **pass** → **service** (test **recovery**).
+
+**Порог**:
+- **Failure count** > **N** (например: **5**) → **Open**.
+- **Wait time** (например: **30 сек**) → **Half-open**.
+- **Success count** > **M** (например: **3**) → **Closed**.
+
+**Resilience4j (Spring Boot)**:
+```java
+// application.yml:
+resilience4j:
+  circuitbreaker:
+    instances:
+      orders-service:
+        failureRateThreshold: 50  # 50% failures
+        slidingWindowSize: 10     # 10 requests
+        waitDurationInOpenState: 30s  # 30s in Open state
+        permittedNumberOfCallsInHalfOpenState: 3  # 3 calls in Half-open
+
+// @RestController:
+@RestController
+public class OrdersController {
+  @Autowired private OrdersClient ordersClient;
+  
+  @GetMapping("/orders/{id}")
+  @CircuitBreaker(name = "orders-service", fallbackMethod = "getOrderFallback")
+  public Order getOrder(@PathVariable Long id) {
+    return ordersClient.getOrder(id);
+  }
+  
+  private Order getOrderFallback(Long id, Throwable t) {
+    return new Order(id, "FALLBACK", "Service unavailable");
+  }
+}
+```
+
+**Fallback**:
+- **Return cached data** (например: **Redis cache**).
+- **Return default value** (например: **empty list**).
+- **Return error** (например: **503 Service Unavailable**).
+
+**Вывод**: **Circuit breaker** = **защита** от **cascade failure**. **3 состояния**: **Closed** (норма), **Open** (fail fast), **Half-open** (testing). **Порог**: **failure count** > **N** → **Open**. **Resilience4j**: **@CircuitBreaker** + **fallbackMethod**. **Fallback**: **cached data**, **default value**, **error**.
+
+### 12. Что такое graceful shutdown и как его настроить
+
+**Graceful shutdown** = **корректное** **остановка** **application** (не **kill** **process**).
+
+**Проблема**:
+- **Kill process** → **in-flight requests** **теряются**.
+- **DB connection** **не закрыта** → **data loss**.
+- **K8s** **delete pod** → **connection** **drop**.
+
+**Graceful shutdown (Spring Boot)**:
+```yaml
+# application.yml:
+server:
+  shutdown: graceful  # Graceful shutdown
+
+spring:
+  lifecycle:
+    timeout-per-shutdown-phase: 30s  # 30s timeout
+```
+
+**Flow**:
+1. **Stop accepting new requests** (не **reject** **in-flight**).
+2. **Wait** для **in-flight requests** (например: **30 сек**).
+3. **Close DB connections** (например: **HikariCP**).
+4. **Flush logs** (например: **Logback**).
+5. **Exit** (process **terminated**).
+
+**@PreDestroy**:
+```java
+@Component
+public class ShutdownHook {
+  @PreDestroy
+  public void cleanup() {
+    // Close resources:
+    httpClient.close();
+    cache.clear();
+    log.info("Shutdown complete");
+  }
+}
+```
+
+**K8s graceful shutdown**:
+```yaml
+# deployment.yaml:
+spec:
+  template:
+    spec:
+      terminationGracePeriodSeconds: 30  # 30s
+      containers:
+      - name: app
+        lifecycle:
+          preStop:
+            exec:
+              command: ["sleep", "5"]  # Wait for LB to remove pod
+```
+- **preStop**: **sleep 5** (wait for **load balancer** **remove** **pod**).
+- **SIGTERM**: **Spring Boot** **graceful shutdown** (30 сек).
+
+**Вывод**: **Graceful shutdown** = **корректное** **остановка** (не **kill** **process**). **Spring Boot**: **server.shutdown: graceful** + **timeout-per-shutdown-phase**. **Flow**: **stop new requests** → **wait in-flight** → **close DB** → **flush logs** → **exit**. **K8s**: **terminationGracePeriodSeconds** + **preStop** (sleep).
+
+### 13. Как настроить health checks в Spring Boot
+
+**Health checks** = **проверка** **health** **application** (например: **/actuator/health**).
+
+**Spring Boot Actuator**:
+```xml
+<dependency>
+  <groupId>org.springframework.boot</groupId>
+  <artifactId>spring-boot-starter-actuator</artifactId>
+</dependency>
+```
+
+**application.yml**:
+```yaml
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always  # Show details
+  health:
+    db:
+      enabled: true  # DB health check
+    disk-space:
+      enabled: true  # Disk space check
+```
+
+**Health indicators**:
+```java
+@Component
+public class CustomHealthIndicator implements HealthIndicator {
+  @Override
+  public Health health() {
+    // Check custom resource:
+    if (redis.ping()) {
+      return Health.up().withDetail("redis", "OK").build();
+    } else {
+      return Health.down().withDetail("redis", "FAIL").build();
+    }
+  }
+}
+```
+
+**K8s probes**:
+```yaml
+# deployment.yaml:
+spec:
+  template:
+    spec:
+      containers:
+      - name: app
+        livenessProbe:  # Is pod alive?
+          httpGet:
+            path: /actuator/health/liveness
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:  # Is pod ready?
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+```
+
+**Liveness vs Readiness**:
+- **Liveness**: **is pod alive?** (если **fail** → **restart pod**).
+- **Readiness**: **is pod ready?** (если **fail** → **remove from LB**).
+
+**Вывод**: **Health checks** = **проверка** **health** **application**. **Spring Boot Actuator**: **/actuator/health** (DB, disk, custom). **K8s**: **liveness probe** (restart) + **readiness probe** (LB). **Custom health indicator**: **HealthIndicator** interface.
+
+### 14. Что такое config management и как его настроить
+
+**Config management** = **управление** **configuration** **application** (env vars, properties, secrets).
+
+**Проблемы**:
+- **Config** в **code** (hardcode) → **hard to change**.
+- **Config** в **file** (например: **application.yml**) → **hard to update** (restart).
+- **Secrets** в **code** → **security risk**.
+
+**Подходы**:
+1. **Env vars** (12-factor): **`DB_URL=...`**, **`DB_PASS=...`**.
+2. **Config server** (Spring Cloud Config): **centralized** config (Git-based).
+3. **Secrets manager** (AWS Secrets Manager, Vault): **secrets** (DB password, API keys).
+4. **Feature flags** (LaunchDarkly, Unleash): **dynamic** config (без **restart**).
+
+**Spring Cloud Config**:
+```yaml
+# application.yml:
+spring:
+  cloud:
+    config:
+      uri: http://config-server:8888
+      profile: prod
+```
+- **Config server**: **Git-based** (например: **GitHub** repo).
+- **Client**: **pull** config от **config server**.
+- **Refresh**: **/actuator/refresh** (без **restart**).
+
+**AWS Secrets Manager**:
+```java
+// Read secret:
+SecretsManagerClient client = SecretsManagerClient.builder()
+  .region(Region.US_EAST_1)
+  .build();
+GetSecretValueResponse secret = client.getSecretValue(
+  GetSecretValueRequest.builder()
+    .secretId("prod/db-password")
+    .build()
+);
+String password = secret.secretString();
+```
+
+**Вывод**: **Config management** = **управление** **configuration** (env vars, properties, secrets). **Env vars** (12-factor). **Spring Cloud Config** (Git-based, **/actuator/refresh**). **Secrets manager** (AWS, Vault). **Feature flags** (dynamic config).
+
+### 15. Как настроить logging и metrics в cloud-native application
+
+**Cloud-native logging** = **structured** (JSON) + **stdout** (не файл) + **centralized** (Loki, ELK).
+
+**Spring Boot logging**:
+```yaml
+# application.yml:
+logging:
+  level:
+    root: INFO
+    com.example: DEBUG
+  pattern:
+    console: "%d{ISO8601} %-5level [%thread] %logger{36} - %msg%n"
+```
+
+**Structured logging (JSON)**:
+```xml
+<!-- logback-spring.xml: -->
+<appender name="JSON" class="net.logstash.logback.LogstashEncoder">
+  <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+    <customFields>{"app":"orders-service"}</customFields>
+  </encoder>
+</appender>
+```
+
+**Metrics (Micrometer + Prometheus)**:
+```java
+// Micrometer:
+@Autowired private MeterRegistry meterRegistry;
+
+// Timer:
+Timer.builder("orders.create")
+  .tag("status", "success")
+  .register(meterRegistry)
+  .record(() -> orderService.create(order));
+```
+
+**Prometheus endpoint**:
+```yaml
+# application.yml:
+management:
+  endpoints:
+    web:
+      exposure:
+        include: prometheus
+  metrics:
+    tags:
+      application: ${SPRING_APPLICATION_NAME}
+```
+
+**K8s + Prometheus**:
+```yaml
+# prometheus config:
+scrape_configs:
+  - job_name: orders-service
+    kubernetes_sd_configs:
+      - role: pod
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        target_label: service
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: "jvm_.*"
+        action: keep
+```
+
+**Вывод**: **Cloud-native logging** = **structured** (JSON) + **stdout** + **centralized** (Loki, ELK). **Spring Boot**: **logback** + **LogstashEncoder**. **Metrics**: **Micrometer** + **Prometheus** (/**actuator/prometheus**). **K8s**: **Prometheus** **scrape** (pod **labels**).
+
+
+### 16. Что такое service mesh и когда он нужен
+
+**Service mesh** = **инфраструктурный** **слой** для **управления** **коммуникацией** между **сервисами**.
+
+**Когда нужен:**
+1. **N** **сервисов** → **N×N** **connections** (управление **сложное**).
+2. **mTLS** (mutual TLS) между **сервисами**.
+3. **Traffic management** (canary, blue/green).
+4. **Observability** (traces, metrics, logs).
+
+**Компоненты**:
+- **Sidecar** (например: **Envoy**) — **proxy** рядом с **сервисом**.
+- **Control plane** (например: **Istiod**) — **управление** **sidecar**.
+- **Data plane** (sidecars) — **проксирование** **трафика**.
+
+**Istio**:
+```yaml
+# VirtualService:
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: orders-service
+spec:
+  hosts:
+  - orders-service
+  http:
+  - route:
+    - destination:
+        host: orders-service
+        subset: v1
+      weight: 90
+    - destination:
+        host: orders-service
+        subset: v2
+      weight: 10
+```
+
+**Вывод**: **Service mesh** = **инфраструктурный** **слой** для **управления** **коммуникацией** между **сервисами**. **Компоненты**: **sidecar** (Envoy), **control plane** (Istiod). **Когда нужен**: **N** **сервисов**, **mTLS**, **traffic management**, **observability**.
+
+### 17. Что такое canary deployment и как его настроить
+
+**Canary deployment** = **постепенное** **развертывание** **нового** **verсии** (10% **трафика** → **new** **version**).
+
+**Process**:
+1. **Deploy** **new** **version** (10% **подов**).
+2. **Route** **10%** **трафика** на **new** **version**.
+3. **Monitor** (metrics, errors).
+4. **Increase** **traffic** (20%, 50%, 100%).
+5. **Rollback** (если **errors**).
+
+**K8s**:
+```yaml
+# Deployment (canary):
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders-service-canary
+spec:
+  replicas: 1  # 1 canary pod
+  template:
+    spec:
+      containers:
+      - name: orders-service
+        image: orders-service:2.0  # New version
+```
+
+**Istio (canary)**:
+```yaml
+# VirtualService:
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: orders-service
+spec:
+  hosts:
+  - orders-service
+  http:
+  - route:
+    - destination:
+        host: orders-service
+        subset: v1
+      weight: 90
+    - destination:
+        host: orders-service
+        subset: v2
+      weight: 10
+```
+
+**Вывод**: **Canary deployment** = **постепенное** **развертывание** **нового** **verсии** (10% → 100%). **Process**: **deploy** → **route** → **monitor** → **increase** → **rollback**. **K8s**: **Deployment** (canary **подов**). **Istio**: **VirtualService** (weight).
+
+### 18. Что такое blue/green deployment и чем он отличается от canary
+
+**Blue/green deployment** = **2** **полных** **окружения** (blue = **current**, green = **new**).
+
+**Process**:
+1. **Blue** = **current** **version** (100% **трафика**).
+2. **Green** = **new** **version** (deploy).
+3. **Test** **green** (smoke tests).
+4. **Switch** **traffic** на **green** (100%).
+5. **Rollback** = **switch** back на **blue**.
+
+**Canary vs Blue/Green**:
+| Фича | Canary | Blue/Green |
+|------|--------|------------|
+| Traffic | **10%** → **100%** (постепенно) | **100%** → **100%** (резко) |
+| Rollback | **Постепенный** (убрать **new** **поды**) | **Мгновенный** (switch back) |
+| Cost | **Lower** (10% **подов**) | **Higher** (2× **подов**) |
+| Risk | **Lower** (10% **трафика**) | **Higher** (100% **трафика**) |
+
+**Вывод**: **Blue/green** = **2** **полных** **окружения** (blue = **current**, green = **new**). **Canary** = **постепенное** (10% → 100%). **Rollback**: **canary** (постепенный), **blue/green** (мгновенный). **Cost**: **canary** (lower), **blue/green** (higher).
+
+### 19. Что такое Helm charts и как их использовать
+
+**Helm** = **package manager** для **K8s**.
+**Helm chart** = **пакет** **K8s** **ресурсов** (Deployment, Service, ConfigMap, Secret).
+
+**Структура**:
+```
+mychart/
+  Chart.yaml       # Chart metadata
+  values.yaml      # Default values
+  templates/       # K8s manifests
+    deployment.yaml
+    service.yaml
+    configmap.yaml
+    secret.yaml
+```
+
+**Chart.yaml**:
+```yaml
+apiVersion: v2
+name: orders-service
+description: Orders service
+version: 1.0.0
+appVersion: "1.0.0"
+```
+
+**values.yaml**:
+```yaml
+replicaCount: 3
+image:
+  repository: orders-service
+  tag: "1.0.0"
+service:
+  type: ClusterIP
+  port: 8080
+```
+
+**Install**:
+```bash
+helm install orders-service ./mychart
+helm install orders-service ./mychart --set replicaCount=5
+```
+
+**Upgrade**:
+```bash
+helm upgrade orders-service ./mychart
+```
+
+**Uninstall**:
+```bash
+helm uninstall orders-service
+```
+
+**Вывод**: **Helm** = **package manager** для **K8s**. **Helm chart** = **пакет** **K8s** **ресурсов**. **Структура**: **Chart.yaml**, **values.yaml**, **templates/**. **Install**: **helm install**. **Upgrade**: **helm upgrade**. **Uninstall**: **helm uninstall**.
+
+### 20. Как настроить secrets management в Kubernetes
+
+**Secrets** = **сensible** **данные** (passwords, API keys, TLS certificates).
+
+**К8s Secrets**:
+```yaml
+# Secret:
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-secret
+type: Opaque
+data:
+  username: YWRtaW4=  # base64("admin")
+  password: cGFzc3dvcmQ=  # base64("password")
+```
+
+**Использование**:
+```yaml
+# Deployment:
+spec:
+  containers:
+  - name: app
+    env:
+    - name: DB_USER
+      valueFrom:
+        secretKeyRef:
+          name: db-secret
+          key: username
+    - name: DB_PASS
+      valueFrom:
+        secretKeyRef:
+          name: db-secret
+          key: password
+```
+
+**Внешние секреты**:
+- **AWS Secrets Manager**
+- **HashiCorp Vault**
+- **Google Secret Manager**
+
+**CSM** (CSI Secrets Store):
+```yaml
+# SecretProviderClass:
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: db-secret-provider
+spec:
+  provider: aws-secrets-manager
+  parameters:
+    secretId: "prod/db-password"
+```
+
+**Вывод**: **Secrets** = **сensible** **данные**. **К8s Secrets**: **base64** (не **encryption**). **Внешние**: **AWS Secrets Manager**, **Vault**, **Google Secret Manager**. **CSM** (CSI Secrets Store): **внешние** **секреты** → **K8s**.

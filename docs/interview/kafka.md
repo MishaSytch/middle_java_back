@@ -70,6 +70,23 @@ try (KafkaProducer<String, String> producer = new KafkaProducer<>(props)) {
 
 Consumer Group — это механизм, позволяющий нескольким консьюмерам координированно читать данные из топика. Ключевое правило: **каждая партиция в рамках одной consumer group может быть назначена только одному консьюмеру**. Это обеспечивает параллельную обработку без дублирования: если один консьюмер упадёт, его партиции будут перераспределены между оставшимися живыми членами группы.
 
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
+flowchart LR
+    classDef producer fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef broker fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef consumer fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+
+    P["Producer"]:::producer
+    T["Topic: orders (3 partitions)"]:::broker
+    C1["Consumer 1<br/>P0, P1"]:::consumer
+    C2["Consumer 2<br/>P2"]:::consumer
+
+    P -->|"send"| T
+    T -->|"P0, P1"| C1
+    T -->|"P2"| C2
+```
+
 ```java
 // Consumer: чтение из топика в consumer group
 import org.apache.kafka.clients.consumer.*;

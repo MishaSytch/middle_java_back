@@ -729,3 +729,414 @@ class UserControllerTest {
 **Вывод**: `StepVerifier` — **стандарт** для тестирования Reactor-кода. Используй **явные** ожидания (`expectNext`, `expectError`), **всегда** ставь timeout, тестируй **ошибки** отдельно от **успеха**.
 
 
+
+### 14. Что такое Sinks и как их использовать для broadcast
+
+**Sinks** (Reactor 3.4+) = **multi-emit** **publisher** (1 **source** → **N** **subscribers**).
+
+**Проблема**:
+- **Mono/Flux** = **single subscriber** (1 **source** → **1** **subscriber**).
+- **Нужно**: **1** **source** → **N** **subscribers** (например: **broadcast** **notification**).
+
+**Sinks (Reactor 3.4+)**:
+```java
+// Create sink:
+Sinks.Many<String> sink = Sinks.many().multicast().onBackpressureBuffer();
+
+// Emit:
+sink.emitNext("message-1", (s, r) -> true);
+sink.emitNext("message-2", (s, r) -> true);
+
+// Subscribe (N subscribers):
+sink.asFlux().subscribe(
+  value -> System.out.println("Subscriber 1: " + value),
+  error -> System.err.println("Error: " + error),
+  () -> System.out.println("Complete")
+);
+
+sink.asFlux().subscribe(
+  value -> System.out.println("Subscriber 2: " + value),
+  error -> System.err.println("Error: " + error),
+  () -> System.out.println("Complete")
+);
+```
+
+**Sinks.Many**:
+- **multicast**: **1** **source** → **N** **subscribers**.
+- **onBackpressureBuffer**: **buffer** **messages** (если **subscriber** **slow**).
+- **onBackpressureDrop**: **drop** **messages** (если **subscriber** **slow**).
+
+**Sinks.One**:
+- **1** **source** → **1** **subscriber** (например: **CompletableFuture**).
+
+```java
+// Sinks.One (1-to-1):
+Sinks.One<String> sink = Sinks.one();
+sink.emitValue("result", (v, r) -> true);
+sink.asMono().subscribe(System.out::println);
+```
+
+**Вывод**: **Sinks** = **multi-emit** **publisher** (1 **source** → **N** **subscribers**). **Sinks.Many**: **multicast** (N **subscribers**), **onBackpressureBuffer** (buffer), **onBackpressureDrop** (drop). **Sinks.One**: **1-to-1** (например: **CompletableFuture**).
+
+### 15. Что такое Reactor Context и как передавать данные через цепочку
+
+**Reactor Context** = **immutable** **context** (key-value) **для** **цепочки** **операторов**.
+
+**Проблема**:
+- **ThreadLocal** **не работает** в **reactive** (поток **меняется**).
+- **Нужно**: **передавать** **данные** (например: **trace_id**, **user_id**) через **цепочку**.
+
+**Context (Reactor)**:
+```java
+// Create context:
+Context context = Context.of("trace_id", "abc123", "user_id", "user_42");
+
+// Pass through chain:
+Flux.just("event-1", "event-2")
+  .doOnNext(event -> {
+    // Read context:
+    String traceId = Context.current().getOrDefault("trace_id", "none");
+    System.out.println(traceId + ": " + event);
+  })
+  .contextWrite(context);
+```
+
+**Context (Spring WebFlux)**:
+```java
+// Controller:
+@GetMapping("/events")
+public Flux<Event> getEvents() {
+  return eventService.getEvents()
+    .contextWrite(Context.of("request_id", UUID.randomUUID().toString()));
+}
+
+// Service:
+public Flux<Event> getEvents() {
+  return Flux.deferContextual(ctx -> {
+    String requestId = ctx.getOrDefault("request_id", "none");
+    log.info("Processing events with request_id={}", requestId);
+    return eventRepository.findAll();
+  });
+}
+```
+
+**Context (MDC)**:
+```java
+// Propagate MDC to Reactor Context:
+Context context = Context.of("mdc", MDC.getCopyOfContextMap());
+
+// Read MDC:
+Flux.deferContextual(ctx -> {
+  Map<String, String> mdc = ctx.get("mdc");
+  MDC.setContextMap(mdc);
+  return doWork();
+}).contextWrite(Context.of("mdc", MDC.getCopyOfContextMap()));
+```
+
+**Вывод**: **Reactor Context** = **immutable** **context** (key-value) **для** **цепочки**. **ThreadLocal** **не работает** в **reactive**. **Context.of** (create), **contextWrite** (pass), **Context.current()** (read). **MDC**: **propagate** через **Context**.
+
+### 16. Как настроить WebClient: retries, timeouts, circuit breaker
+
+**WebClient** = **reactive** **HTTP** **client** (Spring WebFlux).
+
+**Настройка**:
+```java
+// Create WebClient:
+WebClient webClient = WebClient.builder()
+  .baseUrl("http://orders-service")
+  .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+  .build();
+```
+
+**Timeouts**:
+```java
+HttpClient httpClient = HttpClient.create()
+  .responseTimeout(Duration.ofSeconds(30))  // Response timeout
+  .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 5000)  // Connect timeout
+
+WebClient webClient = WebClient.builder()
+  .clientConnector(new ReactorClientHttpConnector(httpClient))
+  .build();
+```
+
+**Retries**:
+```java
+// Retry with backoff:
+Flux<Event> events = webClient.get()
+  .uri("/events")
+  .retrieve()
+  .bodyToFlux(Event.class)
+  .retryWhen(Retry.backoff(3, Duration.ofSeconds(1))
+    .maxBackoff(Duration.ofSeconds(10))
+    .filter(throwable -> throwable instanceof TimeoutException)
+  );
+```
+
+**Circuit Breaker (Resilience4j)**:
+```java
+// application.yml:
+resilience4j:
+  circuitbreaker:
+    instances:
+      orders-service:
+        failureRateThreshold: 50
+        slidingWindowSize: 10
+        waitDurationInOpenState: 30s
+
+// @Service:
+@Service
+public class OrderClient {
+  @Autowired private WebClient webClient;
+  
+  @CircuitBreaker(name = "orders-service", fallbackMethod = "getOrderFallback")
+  public Mono<Order> getOrder(Long id) {
+    return webClient.get()
+      .uri("/orders/{id}", id)
+      .retrieve()
+      .bodyToMono(Order.class);
+  }
+  
+  private Mono<Order> getOrderFallback(Long id, Throwable t) {
+    return Mono.just(new Order(id, "FALLBACK"));
+  }
+}
+```
+
+**Вывод**: **WebClient** = **reactive** **HTTP** **client**. **Timeouts**: **responseTimeout**, **CONNECT_TIMEOUT**. **Retries**: **Retry.backoff** (N **retries**, **backoff**). **Circuit Breaker**: **Resilience4j** (**@CircuitBreaker**, **fallbackMethod**).
+
+### 17. Что такое R2DBC и как он работает
+
+**R2DBC** (Reactive Relational Database Connectivity) = **reactive** **DB** **driver** (не **JDBC**).
+
+**Проблема**:
+- **JDBC** = **blocking** (1 **thread** → **1** **query**).
+- **R2DBC** = **non-blocking** (1 **thread** → **N** **queries**).
+
+**R2DBC (Spring Boot)**:
+```xml
+<dependency>
+  <groupId>org.springframework.boot</groupId>
+  <artifactId>spring-boot-starter-data-r2dbc</artifactId>
+</dependency>
+```
+
+```yaml
+# application.yml:
+spring:
+  r2dbc:
+    url: r2dbc:postgresql://localhost:5432/mydb
+    username: user
+    password: pass
+```
+
+**Repository**:
+```java
+// Entity:
+@Table("orders")
+public class Order {
+  @Id
+  private Long id;
+  private String customer;
+  private BigDecimal amount;
+}
+
+// Repository:
+public interface OrderRepository extends ReactiveCrudRepository<Order, Long> {
+  Flux<Order> findByCustomer(String customer);
+  Flux<Order> findByAmountGreaterThan(BigDecimal amount);
+}
+```
+
+**Query**:
+```java
+// Custom query:
+@Query("SELECT * FROM orders WHERE amount > :amount")
+Flux<Order> findByAmountGreaterThan(@Param("amount") BigDecimal amount);
+
+// Native query:
+@Query(value = "SELECT * FROM orders WHERE customer = :customer", nativeQuery = true)
+Flux<Order> findByCustomerNative(@Param("customer") String customer);
+```
+
+**Service**:
+```java
+@Service
+public class OrderService {
+  @Autowired private OrderRepository orderRepo;
+  
+  public Flux<Order> getOrdersByCustomer(String customer) {
+    return orderRepo.findByCustomer(customer)
+      .flatMap(order -> orderRepo.findById(order.getId())
+        .map(o -> o));
+  }
+}
+```
+
+**Вывод**: **R2DBC** = **reactive** **DB** **driver** (не **JDBC**). **JDBC** = **blocking** (1 **thread** → **1** **query**). **R2DBC** = **non-blocking** (1 **thread** → **N** **queries**). **Spring Boot**: **spring-boot-starter-data-r2dbc**. **Repository**: **ReactiveCrudRepository**.
+
+### 18. Как работать с WebSocket в WebFlux
+
+**WebSocket** = **full-duplex** **connection** (client ↔ server).
+
+**WebFlux WebSocket**:
+```java
+// Controller:
+@Controller
+public class WsController {
+  @Autowired private WebSocketHandler wsHandler;
+  
+  @Bean
+  public RouterFunction<ServerResponse> routes() {
+    return RouterFunctions.route()
+      .websocket("/ws", wsHandler)
+      .build();
+  }
+}
+
+// Handler:
+@Component
+public class WsHandler implements WebSocketHandler {
+  @Override
+  public Mono<Void> handle(WebSocketSession session) {
+    return session.send(
+      session.receive()
+        .map(msg -> {
+          // Echo:
+          return session.textMessage("echo: " + msg.getPayloadAsText());
+        })
+    );
+  }
+}
+```
+
+**Client**:
+```java
+// WebClient WebSocket:
+WebSocketClient client = WebSocketClient.create();
+client.execute(URI.create("ws://localhost:8080/ws"), session -> {
+  session.send(Mono.just(session.textMessage("hello")))
+    .then();
+  
+  return session.receive()
+    .doOnNext(msg -> System.out.println(msg.getPayloadAsText()))
+    .then();
+});
+```
+
+**Вывод**: **WebSocket** = **full-duplex** (client ↔ server). **WebFlux**: **RouterFunctions** (**websocket**), **WebSocketHandler**. **Client**: **WebSocketClient** (**execute**).
+
+### 19. Что такое Server-Sent Events (SSE) в WebFlux
+
+**SSE** (Server-Sent Events) = **server-push** (server → client).
+
+**WebFlux SSE**:
+```java
+// Controller:
+@GetMapping(value = "/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+public Flux<ServerSentEvent<String>> events() {
+  return Flux.interval(Duration.ofSeconds(1))
+    .map(i -> ServerSentEvent.<String>builder()
+      .data("event-" + i)
+      .id(String.valueOf(i))
+      .comment("auto-generated")
+      .build());
+}
+```
+
+**Client**:
+```javascript
+// Browser:
+const es = new EventSource("http://localhost:8080/events");
+es.onmessage = (e) => console.log(e.data);
+es.onerror = () => console.error("SSE error");
+```
+
+**SSE vs WebSocket**:
+| Фича | SSE | WebSocket |
+|------|-----|-----------|
+| Direction | **server → client** | **full-duplex** |
+| Protocol | **HTTP** | **WS** |
+| Reconnection | **auto** (browser) | **manual** |
+| Data format | **text** | **binary/text** |
+| Use case | **notifications** | **real-time** (chat) |
+
+**Вывод**: **SSE** = **server-push** (server → client). **WebFlux**: **Flux<ServerSentEvent>** (produces = **TEXT_EVENT_STREAM**). **Client**: **EventSource** (browser). **SSE** = **notifications**, **WebSocket** = **real-time**.
+
+### 20. Как настроить reactive application в Kubernetes
+
+**Reactive** + **K8s** = **non-blocking** **application** (1 **thread** → **N** **requests**).
+
+**K8s deployment**:
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reactive-app
+spec:
+  replicas: 3
+  template:
+    spec:
+      containers:
+      - name: app
+        image: reactive-app:1.0
+        resources:
+          requests:
+            cpu: 100m  # Low CPU (reactive)
+            memory: 256Mi  # Low memory
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: 8080
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8080
+```
+
+**HPA (Horizontal Pod Autoscaler)**:
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: reactive-app-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: reactive-app
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+```
+
+**Ingress**:
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: reactive-app-ingress
+spec:
+  rules:
+  - host: api.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: reactive-app-service
+            port:
+              number: 8080
+```
+
+**Вывод**: **Reactive** + **K8s** = **non-blocking** **application**. **Resources**: **low** **CPU**/**memory** (reactive). **HPA**: **CPU** **utilization** (70%). **Ingress**: **host** → **service**.
+

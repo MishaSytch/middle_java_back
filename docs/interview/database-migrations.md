@@ -445,3 +445,483 @@ feature:
 - **Метрики** (progress, **errors**, **duration**).
 - **Мониторинг** (alerts при **ошибках**).
 - **Выключение** **после** **завершения** (не **мигрирует** **бесконечно**).
+
+### 9. Конфликты в multi-team migrations и как их решать
+
+**Проблема**: несколько команд делают **migrations** одновременно → **конфликты** (версии, зависимости).
+
+**Типичные конфликты**:
+1. **Версионный**: две команды создали **V5** → **Flyway** не запускает второй.
+2. **Зависимый**: команда A **меняет** таблицу, команда B **read** эту таблицу → **incompatibility**.
+3. **Ordering**: команды A и B **меняют** одну таблицу в **разных** migrations → **race condition**.
+
+**Решения**:
+1. **Один owner** на **schema** (например: **DBA team** или **platform team**).
+2. **Migrations в отдельном repo** (например: `schema-migrations`), **merge** через **PR**.
+3. **Sequential versions**: **V1**, **V2**, **V3** — **без дублирования**.
+4. **Migrations queue**: **CI** проверяет **конфликты** (например: `flyway:info` на **staging**).
+5. **Feature toggle**: **new schema** в **toggle**, **old schema** — fallback.
+
+**Пример**:
+- **Team A**: `V5_add_column_orders.java` (добавляет **column**).
+- **Team B**: `V5_add_column_users.java` (добавляет **column**).
+- **Конфликт**: две **V5** → **Flyway** не запускает второй.
+- **Решение**: **Team B** переименовывает в **V6**.
+
+**Multi-module Spring Boot**:
+- **Каждый модуль** имеет **Flyway** в **classpath**.
+- **Flyway** запускает **migrations** от **всех модулей** (по **classpath scan**).
+- **Conflict**: если два модуля имеют **V5** → **error**.
+- **Решение**: **prefix** (например: `orders/V5_...`, `users/V6_...`).
+
+**CI check**:
+```yaml
+- name: Flyway info
+  run: mvn flyway:info -Dflyway.locations=classpath:db/migration
+```
+
+**Вывод**: **конфликты** в **multi-team** → **1 owner**, **отдельный repo**, **sequential versions**, **CI check**. **Multi-module**: **prefix** (например: `orders/V5`, `users/V6`). **Feature toggle** — **new/old schema** параллельно.
+
+### 10. Migrations для distributed data (Kafka, event sourcing)
+
+**Проблема**: **schema evolution** в **Kafka** / **event sourcing** → **consumers** читают **новые** **events** → **incompatibility**.
+
+**Kafka Schema Registry**:
+- **Schema**: **Avro**, **Protobuf**, **JSON Schema**.
+- **Compatibility modes**:
+  - **BACKWARD**: **new** schema может **читать** **old** data.
+  - **FORWARD**: **old** schema может **читать** **new** data.
+  - **FULL**: **BACKWARD** + **FORWARD**.
+  - **NONE**: **без проверки** (опасно).
+- **Registry**: **Avro/Protobuf** schema → **version** (1, 2, 3, ...).
+
+**Пример (Avro)**:
+```java
+// V1: User { id: string, name: string }
+// V2: User { id: string, name: string, email: string (new) }
+// BACKWARD: V2 reader может читать V1 (email = null).
+// FORWARD: V1 reader НЕ может читать V2 (не знает email).
+```
+
+**Event sourcing**:
+- **Event**: immutable (не меняется после записи).
+- **Event version**: **V1**, **V2**, **V3** (новые поля, **backward-compatible**).
+- **Consumer**: **read** все версии (V1, V2, V3) → **project** в **current model**.
+- **Migration**: **project** старые **events** (V1) → **new model** (V3).
+
+**Пример**:
+```java
+// V1: OrderCreated { orderId, amount }
+// V2: OrderCreated { orderId, amount, currency }  // new
+// V3: OrderCreated { orderId, amount, currency, tax }  // new
+
+// Consumer V3:
+public OrderProjector handle(OrderCreatedV3 event) {
+  return new Order(event.getOrderId(), event.getAmount(),
+    event.getCurrency(), event.getTax());
+}
+
+// Consumer V2 (old):
+public OrderProjector handle(OrderCreatedV2 event) {
+  return new Order(event.getOrderId(), event.getAmount(),
+    event.getCurrency(), null);  // tax = null
+}
+```
+
+**Kafka consumer**:
+- **Schema Registry** → **Avro/Protobuf** decoder.
+- **Compatibility**: **BACKWARD** (default).
+- **Upgrade**: **new** schema → **registry** → **consumers** обновляются **после**.
+
+**Event migration**:
+- **Replay**: **replay** все **events** (V1) → **new** **projector** (V3) → **new** **state**.
+- **Time**: **1 день** (миллионы **events**).
+- **Cutover**: **old** **projector** → **new** **projector** (после **replay**).
+
+**Вывод**: **Kafka**: **Schema Registry** (**Avro/Protobuf**, **BACKWARD**). **Event sourcing**: **event version** (immutable, **backward-compatible**), **consumer** read **all** versions, **migration** = **replay** (все **events** → **new projector**). **Upgrade**: **new schema** → **registry** → **consumers**.
+
+### 11. Data validation после migration
+
+**Проблема**: **data migration** (например: **rename column**) → **data** могла **повредиться** (NULL, **type cast**).
+
+**Data validation** = **check** **data** после **migration**:
+1. **Count check**: **rows** до и после (должны **создавать**).
+2. **Checksum**: **MD5/SHA** по **rows** (должны **создавать**).
+3. **Spot check**: **N** **rows** вручную (например: **100**).
+4. **Aggregate**: **SUM**, **AVG**, **MIN**, **MAX** (должны **создавать**).
+5. **Referential integrity**: **FK** (должны **создавать**).
+
+**Пример (PostgreSQL)**:
+```sql
+-- Before migration:
+SELECT COUNT(*), SUM(amount) FROM orders;
+-- Count: 1000000, Sum: 50000000
+
+-- Migration:
+ALTER TABLE orders RENAME COLUMN amount TO total;
+
+-- After migration:
+SELECT COUNT(*), SUM(total) FROM orders;
+-- Count: 1000000, Sum: 50000000  (OK)
+```
+
+**Data validation (Flyway)**:
+```java
+// V5_validate_orders.java
+public class V5_validate_orders extends BaseJavaMigration {
+  @Override
+  public void migrate(Context context) throws Exception {
+    Connection conn = context.getConnection();
+    Statement stmt = conn.createStatement();
+    
+    // Count check:
+    ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM orders");
+    rs.next();
+    long count = rs.getLong(1);
+    if (count != EXPECTED_COUNT) {
+      throw new MigrationException("Count mismatch: " + count);
+    }
+    
+    // Checksum:
+    rs = stmt.executeQuery("SELECT MD5(CAST(AGGREGATE(*) AS TEXT)) FROM orders");
+    rs.next();
+    String checksum = rs.getString(1);
+    if (!checksum.equals(EXPECTED_CHECKSUM)) {
+      throw new MigrationException("Checksum mismatch: " + checksum);
+    }
+  }
+}
+```
+
+**Automated**: **Deequ** (Spark), **Great Expectations** (Python), **dbt tests** (SQL).
+
+**Вывод**: **data validation** после **migration** = **count check**, **checksum**, **spot check**, **aggregate**, **referential integrity**. **Automated**: **Deequ**, **Great Expectations**, **dbt tests**.
+
+### 12. Как мигрировать данные между СУБД (PostgreSQL → MySQL)
+
+**Проблема**: **миграция** **data** между **СУБД** (например: **PostgreSQL** → **MySQL**) → **schema** + **data** (миллионы **rows**).
+
+**Подходы**:
+1. **ETL** (Extract, Transform, Load): **script** (Python, **bpython**) → **copy** **data**.
+2. **CDC** (Change Data Capture): **Debezium** (Kafka Connect) → **stream** **changes**.
+3. **Replication**: **PostgreSQL** **logical replication** → **MySQL** (через **Debezium**).
+4. **Migration tool**: **pgloader**, **mydumper**, **mysqldump**.
+
+**Пример (ETL)**:
+```python
+# extract.py
+import psycopg2, pymysql
+
+src = psycopg2.connect("dbname=prod user=etl")
+dst = pymysql.connect("host=mysql host=prod user=etl")
+
+# Extract:
+cur = src.cursor()
+cur.execute("SELECT * FROM orders ORDER BY id")
+rows = cur.fetchall()
+
+# Transform:
+transformed = [
+  (r[0], r[1], r[2], r[3].isoformat())  # Date → ISO
+  for r in rows
+]
+
+# Load:
+dst_cur = dst.cursor()
+dst_cur.executemany("INSERT INTO orders VALUES %s", transformed)
+dst.commit()
+```
+
+**CDC (Debezium)**:
+- **PostgreSQL** **WAL** → **Debezium** (Kafka Connect) → **Kafka** topic → **MySQL**.
+- **Real-time**: **new** **rows** в **MySQL** в **real-time**.
+- **Cutover**: **switch** **traffic** на **MySQL** (после **sync**).
+
+**pgloader**:
+```sql
+LOAD FROM 'postgresql://prod/orders'
+INTO 'mysql://prod/orders'
+WITH method fast, cast id to bigint;
+```
+
+**Schema mapping**:
+| PostgreSQL | MySQL |
+|------------|-------|
+| `SERIAL` | `AUTO_INCREMENT` |
+| `TIMESTAMPTZ` | `DATETIME` (UTC) |
+| `JSONB` | `JSON` |
+| `ARRAY` | **не** **поддерживается** (JSON) |
+| `UUID` | `CHAR(36)` |
+
+**Вывод**: **ETL** (script), **CDC** (Debezium, **real-time**), **pgloader** (bulk). **Schema mapping**: **SERIAL** → **AUTO_INCREMENT**, **JSONB** → **JSON**, **ARRAY** → **JSON**. **Cutover**: **switch traffic** после **sync**.
+
+### 13. Online schema change (gh-ost, pt-online-schema-change)
+
+**Проблема**: **ALTER TABLE** на **большой** **таблице** (10 млн **rows**) → **lock** **длинный** → **downtime**.
+
+**Online schema change** = **без lock** (или **short lock**):
+1. **gh-ost** (GitHub): **copy** **data** в **new table** → **rename** (short lock).
+2. **pt-online-schema-change** (Percona): **trigger** → **copy** → **rename**.
+
+**gh-ost**:
+```bash
+gh-ost --database=prod \
+  --alter="ADD COLUMN email VARCHAR(255)" \
+  --cut-over=default \
+  --critical-load="Query_latency.p95>100" \
+  --execute
+```
+- **Copy**: **rows** по **chunks** (1000 **rows**).
+- **Cutover**: **rename** (short lock, ~100ms).
+- **Throttle**: **Query_latency** > **100ms** → **pause**.
+
+**pt-online-schema-change**:
+```bash
+pt-online-schema-change \
+  --alter="ADD COLUMN email VARCHAR(255)" \
+  --execute \
+  D=prod,t=orders,h=127.0.0.1
+```
+- **Trigger**: **AFTER INSERT**/**AFTER UPDATE**/**AFTER DELETE** → **copy** в **new table**.
+- **Cutover**: **rename** (short lock).
+
+**Сравнение**:
+| Фича | gh-ost | pt-online-schema-change |
+|------|--------|------------------------|
+| Copy method | **WAL** (PostgreSQL) / **binlog** (MySQL) | **trigger** |
+| Performance | **fast** (WAL/binlog) | **slow** (trigger) |
+| Cutover | **rename** (short lock) | **rename** (short lock) |
+| Throttle | **Query_latency** | **none** |
+| PostgreSQL | **no** | **yes** |
+| MySQL | **yes** | **yes** |
+
+**Вывод**: **gh-ost** (**WAL/binlog**, **fast**, **throttle**), **pt-online-schema-change** (**trigger**, **slow**). **Cutover**: **rename** (short lock). **PostgreSQL**: **pt-online-schema-change**. **MySQL**: **gh-ost**.
+
+### 14. Migrations в cloud (RDS, Aurora, Cloud SQL)
+
+**Проблема**: **migrations** в **cloud** (RDS, Aurora, Cloud SQL) → **no SSH**, **no root**, **managed** **DB**.
+
+**RDS/Aurora**:
+- **No SSH**: **migrations** через **RDS Data API** (или **RDS Proxy**).
+- **No root**: **Flyway** / **Liquibase** через **app** (не **DBA**).
+- **Multi-AZ**: **primary** + **standby** → **migrations** на **primary** (auto **replication**).
+- **Blue/green**: **RDS Blue/Green** (preview **migration**).
+
+**Cloud SQL**:
+- **No SSH**: **migrations** через **app** (не **DBA**).
+- **Managed**: **Google** **migrations** (например: **Cloud SQL Migrate**).
+- **Backup**: **automated** (по **retention**).
+
+**Flyway + RDS**:
+```yaml
+# application.yml
+spring:
+  flyway:
+    url: jdbc:aws-wrapper:rds://prod.abc123.us-east-1.rds.amazonaws.com:5432/app
+    user: deploy
+    password: ${DB_PASSWORD}
+```
+- **App** запускает **Flyway** (например: **CI** pipeline).
+- **No root**: **deploy user** имеет **CREATE**, **ALTER**, **DROP** (но **no** **DROP DATABASE**).
+
+**RDS Data API**:
+```java
+// RDS Data API (no JDBC):
+RdsDataClient client = RdsDataClient.create(Region.US_EAST_1);
+ExecuteStatementRequest req = ExecuteStatementRequest.builder()
+  .resourceArn("arn:aws:rds:...")
+  .secretArn("arn:aws:secretsmanager:...")
+  .statement("SELECT * FROM orders")
+  .build();
+client.executeStatement(req);
+```
+
+**Blue/green (RDS)**:
+1. **Create** **green** **DB** (copy **schema** + **data**).
+2. **Apply** **migrations** на **green**.
+3. **Cutover**: **switch** **traffic** на **green** (short downtime).
+4. **Rollback**: **switch** back на **blue** (если **error**).
+
+**Вывод**: **cloud** (RDS, Cloud SQL) → **no SSH**, **no root**, **migrations** через **app** (Flyway/Liquibase) или **RDS Data API**. **Multi-AZ**: **migrations** на **primary**. **Blue/green**: **preview** **migration**, **cutover** (short downtime).
+
+### 15. Disaster recovery и migrations
+
+**Проблема**: **disaster** (например: **DB crash**) → **migrations** **не завершены** → **inconsistent state**.
+
+**DR** (Disaster Recovery) + **migrations**:
+1. **Backup**: **automated** (например: **RDS** **snapshot** каждые **6 часов**).
+2. **Recovery**: **restore** **backup** → **migrations** **re-apply** (idempotent).
+3. **RPO** (Recovery Point Objective): **максимальная** **потеря** **data** (например: **15 мин**).
+4. **RTO** (Recovery Time Objective): **максимальное** **время** **recovery** (например: **1 час**).
+
+**Idempotent migrations**:
+- **Flyway** / **Liquibase** — **idempotent** (если **migration** **уже** **applied**, **не** **re-apply**).
+- **Data migration**: **idempotent** (например: **UPSERT**).
+
+**Регламент**:
+1. **DB crash** → **alert** (например: **Prometheus**).
+2. **Restore** **backup** (например: **RDS** **restore**).
+3. **Flyway**: **migrate** (re-apply **unapplied** **migrations**).
+4. **Smoke test**: **check** **data** (например: **SELECT COUNT(*)**).
+5. **Traffic**: **switch** на **restored** **DB**.
+
+**РTO/RPO**:
+| RTO | RPO | Уровен |
+|-----|-----|--------|
+| 1 час | 15 мин | **high** (production) |
+| 6 часов | 1 час | **medium** (staging) |
+| 24 часа | 6 часов | **low** (dev) |
+
+**Вывод**: **DR** + **migrations** → **backup** (automated), **restore**, **idempotent** **migrations** (Flyway/Liquibase), **smoke test**. **RTO/RPO**: **high** (1 час / 15 мин), **medium** (6 часов / 1 час), **low** (24 часа / 6 часов).
+
+
+### 16. Как мигрировать данные с сохранением консистентности
+
+**Проблема:** **data migration** (например: **rename column**) → **data** могла **повредиться**.
+
+**Подходы**:
+1. **Expand-contract** — **добавить** **new column**, **заполнить**, **убрать** **old**.
+2. **Dual-write** — **писать** в **обе** **таблицы** (временное).
+3. **CDC** (Change Data Capture) — **Debezium** (Kafka Connect).
+
+**Expand-contract**:
+```sql
+-- Step 1: Expand (add new column):
+ALTER TABLE orders ADD COLUMN total DECIMAL(10,2);
+
+-- Step 2: Backfill (copy data):
+UPDATE orders SET total = amount;
+
+-- Step 3: Code (use new column):
+-- App code now uses total instead of amount
+
+-- Step 4: Contract (drop old column):
+ALTER TABLE orders DROP COLUMN amount;
+```
+
+**Dual-write**:
+```java
+// Write to both:
+orderRepo.save(order);  // Old table
+orderRepoV2.save(order);  // New table
+```
+
+**Вывод**: **data migration** → **expand-contract** (add, backfill, drop), **dual-write** (write to both), **CDC** (Debezium). **Consistency**: **backfill** + **dual-write** (temporary).
+
+### 17. Как мигрировать данные в real-time (CDC)
+
+**CDC** (Change Data Capture) = **захват** **изменений** **в real-time**.
+
+**Debezium**:
+```yaml
+# Kafka Connect:
+name: postgres-cdc
+config:
+  connector.class: io.debezium.connector.postgresql.PostgresConnector
+  database.hostname: localhost
+  database.port: 5432
+  database.user: debezium
+  database.password: dbz
+  database.dbname: mydb
+  database.server.name: mydb
+  topic.prefix: mydb
+```
+
+**Flow**:
+```
+PostgreSQL (WAL) → Debezium (Kafka Connect) → Kafka topic → Consumer → New DB
+```
+
+**Use cases**:
+- **Database migration** (PostgreSQL → MySQL)
+- **Cache invalidation** (CDC → Redis)
+- **Search indexing** (CDC → Elasticsearch)
+- **Data lake** (CDC → S3)
+
+**Вывод**: **CDC** = **захват** **изменений** **в real-time**. **Debezium**: **PostgreSQL** (WAL) → **Kafka** → **Consumer**. **Use cases**: **migration**, **cache invalidation**, **search indexing**, **data lake**.
+
+### 18. Как мигрировать данные с минимальным downtime
+
+**Проблема:** **data migration** (миллионы **rows**) → **downtime**.
+
+**Подходы**:
+1. **Online schema change** (gh-ost, pt-online-schema-change).
+2. **Batch migration** (по **chunks**).
+3. **CDC** (Debezium) — **real-time**.
+
+**Batch migration**:
+```sql
+-- Migrate in batches:
+INSERT INTO new_table (SELECT * FROM old_table WHERE id BETWEEN 1 AND 1000);
+INSERT INTO new_table (SELECT * FROM old_table WHERE id BETWEEN 1001 AND 2000);
+-- ...
+```
+
+**Cutover**:
+```sql
+-- Switch traffic (short downtime):
+BEGIN;
+RENAME TABLE old_table TO old_table_backup;
+RENAME TABLE new_table TO old_table;
+COMMIT;
+```
+
+**Вывод**: **data migration** (минимальный **downtime**) → **online schema change** (gh-ost), **batch migration** (chunks), **CDC** (Debezium). **Cutover**: **rename** (short downtime).
+
+### 19. Как мигрировать данные между облачными СУБД
+
+**Проблема:** **migration** между **облачными** **СУБД** (RDS → Aurora, Cloud SQL → Spanner).
+
+**Инструменты**:
+- **AWS DMS** (Database Migration Service)
+- **Google DMS** (Database Migration Service)
+- **Azure DMS** (Database Migration Service)
+- **Debezium** (CDC)
+
+**AWS DMS**:
+```yaml
+# AWS DMS:
+# 1. Create replication instance
+# 2. Create source endpoint (RDS)
+# 3. Create target endpoint (Aurora)
+# 4. Create replication task
+# 5. Start migration
+```
+
+**Flow**:
+```
+RDS (source) → AWS DMS → Aurora (target)
+```
+
+**Вывод**: **migration** между **облачными** **СУБД** → **AWS DMS**, **Google DMS**, **Azure DMS**, **Debezium**. **Flow**: **source** → **DMS** → **target**.
+
+### 20. Как мигрировать данные с проверкой целостности
+
+**Проблема:** **data migration** → **data** могла **повредиться** (NULL, **type cast**).
+
+**Проверки**:
+1. **Count check** — **rows** до и после.
+2. **Checksum** — **MD5/SHA** по **rows**.
+3. **Aggregate** — **SUM**, **AVG**, **MIN**, **MAX**.
+4. **Referential integrity** — **FK**.
+
+**Пример**:
+```sql
+-- Before migration:
+SELECT COUNT(*), SUM(amount) FROM orders;
+-- Count: 1000000, Sum: 50000000
+
+-- Migration:
+ALTER TABLE orders RENAME COLUMN amount TO total;
+
+-- After migration:
+SELECT COUNT(*), SUM(total) FROM orders;
+-- Count: 1000000, Sum: 50000000  (OK)
+```
+
+**Automated**:
+- **Deequ** (Spark)
+- **Great Expectations** (Python)
+- **dbt tests** (SQL)
+
+**Вывод**: **data migration** → **count check**, **checksum**, **aggregate**, **referential integrity**. **Automated**: **Deequ**, **Great Expectations**, **dbt tests**.

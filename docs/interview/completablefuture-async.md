@@ -3,13 +3,13 @@
 
 ### 1. Что такое CompletableFuture и чем он отличается от Future?
 
-`CompletableFuture` — это класс, представленный в Java 8, который реализует интерфейсы `Future` и `CompletionStage`. Он представляет собой контейнер для значения, которое будет вычислено асинхронно, но в отличие от `Future`, предоставляет мощные возможности для композиции, обработки ошибок и неблокирующей работы.
+`CompletableFuture` (комплеtable-фьючер — «наполняемый в будущем» асинхронный результат) — это класс, представленный в Java 8, который реализует интерфейсы `Future` (фьючер — объект-обещание будущего результата) и `CompletionStage` (стадия завершения — промежуточный узел в цепочке асинхронных операций). Он представляет собой контейнер для значения, которое будет вычислено асинхронно (asynchronous — без блокировки вызвающего потока), но в отличие от `Future`, предоставляет мощные возможности для композиции (composition — построение цепочек из простых этапов), обработки ошибок и неблокирующей работы.
 
 Ключевые отличия от `Future` (появившегося в Java 5):
-- **Композиция:** `Future` не поддерживает создание цепочек асинхронных вызовов. `CompletableFuture` позволяет строить конвейеры с помощью методов вроде `thenApply`, `thenCompose` и других.
-- **Неблокирующая обработка:** `Future` предоставляет только блокирующий метод `get()` для получения результата. `CompletableFuture` позволяет зарегистрировать колбэк, который будет вызван по завершении задачи, без блокировки потока.
-- **Обработка ошибок:** `Future` не имеет встроенных механизмов для элегантной обработки исключений, кроме как через `try-catch` вокруг `get()`. `CompletableFuture` предлагает методы `exceptionally()`, `handle()` и `whenComplete()`.
-- **Ручное завершение:** `CompletableFuture` можно завершить вручную с помощью методов `complete()` или `completeExceptionally()`.
+- **Композиция:** `Future` не поддерживает создание цепочек асинхронных вызовов. `CompletableFuture` позволяет строить конвейеры (pipeline — последовательность связанных этапов обработки) с помощью методов вроде `thenApply`, `thenCompose` и других.
+- **Неблокирующая обработка (non-blocking):** `Future` предоставляет только блокирующий метод `get()` (блокирующий — поток «зависает» до готовности результата) для получения результата. `CompletableFuture` позволяет зарегистрировать колбэк (callback — функция, вызываемая при событии), который будет вызван по завершении задачи, без блокировки потока.
+- **Обработка ошибок:** `Future` не имеет встроенных механизмов для элегантной обработки исключений, кроме как через `try-catch` вокруг `get()`. `CompletableFuture` предлагает методы `exceptionally()` (обработка только ошибки), `handle()` (обработка и успеха и ошибки) и `whenComplete()` (побочный эффект без изменения результата).
+- **Ручное завершение:** `CompletableFuture` можно завершить вручную с помощью методов `complete()` (завершить со значением) или `completeExceptionally()` (завершить исключением).
 
 ### 2. Какие основные преимущества CompletableFuture перед Future?
 
@@ -31,6 +31,37 @@ CompletableFuture<String> future = CompletableFuture.completedFuture("готов
 
 - **`thenApply(Function)`** используется для **преобразования** результата. Это аналог `map` в функциональном программировании. Он принимает функцию, которая преобразует результат предыдущего этапа в новое значение. Возвращается `CompletableFuture` с новым типом.
 - **`thenCompose(Function)`** используется для **плоского связывания** (flattening). Это аналог `flatMap`. Функция, переданная в `thenCompose`, должна возвращать другой `CompletableFuture`. Это позволяет избежать вложенных структур `CompletableFuture<CompletableFuture<T>>` при последовательном выполнении асинхронных операций, зависящих друг от друга.
+
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
+flowchart LR
+    classDef stage fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef result fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+
+    A["supplyAsync(fetchUser)"]:::stage
+    B["thenApply(name)"]:::stage
+    C["thenCompose(fetchOrders)"]:::stage
+    D["thenApply(count)"]:::stage
+    E["Result: 42"]:::result
+
+    A -->|"User"| B
+    B -->|"String"| C
+    C -->|"CompletableFuture~List~"| D
+    D -->|"int"| E
+```
+
+```java
+// thenApply: map — преобразование
+CompletableFuture<String> name =
+    supplyAsync(() -> fetchUser(42))
+        .thenApply(User::getName);        // User → String
+
+// thenCompose: flatMap — последовательные async-операции
+CompletableFuture<Integer> orderCount =
+    supplyAsync(() -> fetchUser(42))
+        .thenCompose(user -> fetchOrders(user.getId()))  // User → CF~List~
+        .thenApply(List::size);                          // List → int
+```
 
 ### 5. Что делают методы thenAccept() и thenRun()?
 

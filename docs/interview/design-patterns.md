@@ -512,6 +512,140 @@ flowchart LR
 ```
 
 
+### 17. Что такое CQRS (Command Query Responsibility Segregation)
+**Проблема:** одна модель для чтения и записи (аномалии, сложности).
 
+**Решение:**
+- **Command** — запись (CommandHandler)
+- **Query** — чтение (QueryHandler)
+- **Разные модели** — Command model и Query model
 
+```java
+// Command:
+public class CreateOrderCommand {
+    private Long userId;
+    private List<OrderItem> items;
+}
 
+public class CreateOrderHandler {
+    public void handle(CreateOrderCommand command) {
+        // Write to OrderStore
+    }
+}
+
+// Query:
+public class GetOrdersQuery {
+    private Long userId;
+}
+
+public class GetOrdersHandler {
+    public List<OrderDto> handle(GetOrdersQuery query) {
+        // Read from OrderReadModel
+    }
+}
+```
+
+**Когда использовать:**
+- **Разная нагрузка** на чтение и запись
+- **Разные модели** для чтения и записи
+- **Event sourcing** (часто в паре)
+
+### 18. Что такое Event Sourcing
+**Проблема:** состояние = текущее состояние (потеря истории).
+
+**Решение:**
+- **Event** — неизменяемое событие
+- **Event store** — хранилище событий
+- **State** = apply всех событий
+
+```java
+// Event:
+public class OrderCreatedEvent {
+    private String orderId;
+    private BigDecimal amount;
+    private Instant createdAt;
+}
+
+// Event store:
+public interface EventStore {
+    void appendEvent(OrderCreatedEvent event);
+    List<OrderCreatedEvent> getEvents(String orderId);
+}
+
+// State:
+public class OrderState {
+    private String orderId;
+    private BigDecimal amount;
+    
+    public void apply(OrderCreatedEvent event) {
+        this.orderId = event.getOrderId();
+        this.amount = event.getAmount();
+    }
+}
+```
+
+**Плюсы:**
+- **История** — полная история изменений
+- **Аудит** — кто, что, когда
+- **Debug** — воспроизвести состояние
+- **Time travel** — состояние на любой момент
+
+**Минусы:**
+- **Сложность** — event handling
+- **Хранение** — много событий
+- **Query** — сложный query (read model)
+
+### 19. Что такое Saga pattern
+**Проблема:** distributed transaction (несколько сервисов).
+
+**Решение:**
+- **Saga** = sequence of local transactions
+- **Compensating transaction** — откат
+
+```java
+// Saga:
+public class OrderSaga {
+    public void execute(Order order) {
+        // 1. Reserve inventory
+        inventoryService.reserve(order.getItems());
+        
+        // 2. Process payment
+        paymentService.charge(order.getAmount());
+        
+        // 3. Ship order
+        shippingService.ship(order);
+        
+        // Compensating (if step 3 fails):
+        // - Refund payment
+        // - Release inventory
+    }
+}
+```
+
+**Оркестрация:**
+- **Orchestrator** — координирует saga
+- **Participants** — сервисы
+
+**Хореография:**
+- **Events** — сервисы реагируют на события
+- **No orchestrator** — distributed
+
+### 20. Какие новые паттерны появились с микросервисами
+**Паттерны:**
+1. **API Gateway** — единая точка входа
+2. **Circuit Breaker** — защита от cascade failure
+3. **Saga** — distributed transaction
+4. **Event Sourcing** — история изменений
+5. **CQRS** — разделение чтения и записи
+6. **Service Discovery** — поиск сервисов
+7. **Load Balancer** — балансировка нагрузки
+8. **Rate Limiter** — ограничение запросов
+9. **Retry** — повторная попытка
+10. **Bulkhead** — изоляция ресурсов
+
+**Когда использовать:**
+- **API Gateway** — multiple services
+- **Circuit Breaker** — dependency failure
+- **Saga** — distributed transaction
+- **Event Sourcing** — audit, history
+- **CQRS** — different read/write models

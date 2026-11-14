@@ -9,6 +9,24 @@ ACID — это набор требований к транзакционным 
 - **Isolation (Изоляция)** — результаты параллельно выполняющихся транзакций не влияют друг на друга до момента их завершения. Каждая транзакция «видит» согласованный снимок данных.
 - **Durability (Долговечность / Устойчивость)** — изменения, подтвержденные (закоммиченные) транзакцией, сохраняются навсегда, даже в случае сбоя системы.
 
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
+flowchart LR
+    classDef acid fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef db fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef err fill:#fdeef0,stroke:#d49a9c,stroke-width:2px,color:#1f2937
+
+    T["Transaction Start"]:::acid
+    OPS["INSERT / UPDATE / DELETE"]:::acid
+    C["COMMIT"]:::acid
+    R["ROLLBACK"]:::err
+    DB[("Database")]:::db
+
+    T --> OPS --> C --> DB
+    OPS -->|"error"| R
+    R -.->|"undo all"| DB
+```
+
 
 ### 2. Какие уровни изоляции транзакций существуют
 
@@ -20,6 +38,24 @@ ACID — это набор требований к транзакционным 
 4.  **Serializable**
 
 Каждый следующий уровень предотвращает все больше аномалий, но ценой снижения производительности и параллелизма.
+
+```sql
+-- PostgreSQL: смена уровня изоляции
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+SELECT balance FROM accounts WHERE id = 1;
+-- ... операции ...
+COMMIT;
+
+-- MySQL (InnoDB): смена уровня изоляции
+SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+START TRANSACTION;
+-- ... операции ...
+COMMIT;
+
+-- Spring: уровень изоляции в @Transactional
+@Transactional(isolation = Isolation.REPEATABLE_READ)
+public void transfer(long fromId, long toId, BigDecimal amount) { ... }
+```
 
 
 ### 3. Что такое Read Uncommitted
@@ -150,6 +186,28 @@ public void someMethod() throws IOException { ... }
 ### 21. Что такое readonly транзакция
 
 `readOnly = true` — это атрибут `@Transactional`, который сообщает Spring, что транзакция будет **только для чтения**. Это служит оптимизацией: Spring может передать этот флаг в базовый уровень (например, JDBC), чтобы СУБД могла применить внутренние оптимизации для read-only операций. Также это служит защитой: некоторые СУБД могут отклонить операции записи в такой транзакции. На уровне JPA Hibernate также может использовать этот флаг для оптимизации (например, не выполнять dirty checking).
+
+```java
+@Service
+public class ReportService {
+
+    // Read-only: оптимизация + защита от случайной записи
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    public List<Order> getOrdersByDate(LocalDate date) {
+        return orderRepo.findByOrderDate(date);
+    }
+
+    // Write: полноценная транзакция с rollback
+    @Transactional(rollbackFor = Exception.class)
+    public void cancelOrder(Long orderId) {
+        Order order = orderRepo.findById(orderId)
+            .orElseThrow(() -> new OrderNotFoundException(orderId));
+        order.setStatus(OrderStatus.CANCELLED);
+        orderRepo.save(order);
+        // Если здесь ошибка — весь метод откатится
+    }
+}
+```
 
 
 ### 22. Что произойдёт при вызове @Transactional метода из другого метода того же класса

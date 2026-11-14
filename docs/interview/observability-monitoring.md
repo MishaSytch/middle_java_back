@@ -872,3 +872,613 @@ flowchart TB
 **Вывод**: **OTel SDK** (auto-instrumentation) + **Micrometer** (metrics) + **OTel Collector** (batching, sampling) + **Prometheus** (metrics) + **Tempo** (traces) + **Loki** (logs) + **Grafana** (visualization) + **Alertmanager** (alerting). **SLO-based** **alerting** + **correlation** — **ключ** к **production-ready** observability.
 
 
+
+### 13. Какие бывают типы метрик: Counter, Gauge, Timer, Histogram — когда какой
+
+**Типы метрик**:
+| Тип | Пример | Семантика | Use case |
+|-----|--------|-----------|----------|
+| **Counter** | `requests_total` | монотонно растёт (reset только на 0 после restart) | количество событий |
+| **Gauge** | `heap_used_bytes` | текущее значение (может расти и падать) | уровень ресурса |
+| **Timer** | `request_duration` | duration + count | время операции |
+| **Histogram** | `response_size` | distribution (buckets) | распределение значений |
+
+**Counter** (Micrometer):
+```java
+Counter.builder("orders_created")
+  .description("Созданные заказы")
+  .tag("status", "success")
+  .register(meterRegistry)
+  .increment();
+```
+
+**Gauge**:
+```java
+Gauge.builder("db_pool_active", dataSource, DataSource::getActiveConnections)
+  .description("Активные connection'ы в пуле")
+  .register(meterRegistry);
+```
+
+**Timer**:
+```java
+Timer.builder("order_service.create")
+  .tag("endpoint", "POST /orders")
+  .register(meterRegistry)
+  .record(() -> orderService.create(order));
+```
+
+**Histogram**:
+```java
+DistributionSummary.builder("response_size_bytes")
+  .serviceLevelObjectives(1024, 10240, 102400, 1024000)  // buckets
+  .register(meterRegistry)
+  .record(responseBody.length());
+```
+
+**Prometheus mapping**:
+- Counter → `counter` (с `total` суффиксом)
+- Gauge → `gauge`
+- Timer → `histogram` + `summary` (quantiles)
+- Histogram → `histogram`
+
+**Правило**:
+- **Counter** — количество событий (requests, errors, orders)
+- **Gauge** — текущее состояние (heap, connections, queue size)
+- **Timer** — время (duration of request)
+- **Histogram** — распределение (response size, cache hit size)
+
+**Вывод**: **Counter** (количество), **Gauge** (уровень), **Timer** (время), **Histogram** (распределение). **Counter** — монотонно, **Gauge** — текущее, **Timer** = **Histogram** + count, **Histogram** — buckets для quantiles.
+
+### 14. Что такое cardinality и почему высокая cardinality — проблема
+
+**Cardinality** = количество уникальных **time series** (комбинация metric + labels).
+
+**Пример**:
+```
+http_requests_total{method="GET", path="/users/{id}", status="200"}
+```
+Если `{id}` — 100000 уникальных пользователей → 100000 time series (высокая cardinality).
+
+**Проблемы высокой cardinality**:
+1. **Память Prometheus**: каждая time series — ~1-2 KB (labels) + samples. 1 млн series → GB.
+2. **Slow query**: `sum by (path)` — 1 млн series → секунды.
+3. **TTL**: Prometheus хранит 15 дней по умолчанию → 1 млн series × 15 дней = тяжёлая БД.
+4. **WAL bloat**: write-ahead log растёт.
+
+**Примеры низкой vs высокой cardinality**:
+| Низкая | Высокая |
+|--------|---------|
+| `http_requests_total{method="GET"}` (1) | `http_requests_total{user_id="user_12345"}` (100000) |
+| `db_pool_active{db="postgres"}` (1) | `cache_size_bytes{key="user_12345"}` (100000) |
+| `order_created_total{status="success"}` (1) | `order_created_total{order_id="order_12345"}` (1000000) |
+
+**Как снизить cardinality**:
+1. **Route template** вместо **path**:
+   ```java
+   // ПЛОХО (высокая cardinality):
+   .tag("path", request.getRequestURI())  // /users/12345 → 100000 series
+   
+   // ХОРОШО (низкая cardinality):
+   .tag("route", request.getHandler().toString())  // UserController.getUser → 100 series
+   ```
+
+2. **Не метить user_id, order_id** — только **status, method, endpoint**:
+   ```java
+   Timer.builder("orders.create")
+     .tag("status", "success")       // OK (2-3 values)
+     // .tag("user_id", userId)      // НЕ (100000 values)
+     .register(meterRegistry);
+   ```
+
+3. **Aggregate**: если нужна детализация — в **logs** (Loki), не в **metrics** (Prometheus).
+
+4. **Micrometer**: **low cardinality** tags только; **high cardinality** → **logs** + **MDC**.
+
+**Monitring cardinality**:
+```promql
+# Количество time series:
+count(http_requests_total)
+
+# Рост:
+rate(count(http_requests_total)[1h])
+
+# Top-10 metrics по cardinality:
+topk(10, count by (__name__)({}))
+```
+
+**Alert**:
+```yaml
+- alert: HighCardinality
+  expr: count(http_requests_total) > 50000
+  for: 5m
+  labels:
+    severity: warning
+```
+
+**Вывод**: **cardinality** = количество уникальных **time series**. **Высокая cardinality** → **память**, **slow query**, **WAL bloat**. **Решение**: **route template** вместо **path**, **не метить** **user_id**/**order_id**, **high cardinality** → **logs** (Loki), не **metrics**.
+
+### 15. Как устроен Prometheus: TSDB, chunks, compaction, retention
+
+**Prometheus** — **pull-based** TSDB (time-series database).
+
+**Архитектура**:
+1. **Scrape** (pull): Prometheus **забирает** метрики с **/metrics** эндпоинтов.
+2. **In-memory**: **Head** (последние 2 часа).
+3. **On-disk**: **chunks** (2-минутные блоки) + **index**.
+4. **Compaction**: merging chunks в более крупные.
+5. **Retention**: удаление старых (по умолчанию 15 дней).
+
+**TSDB структура**:
+```
+tsdb/
+  head/            # in-memory (последние 2 ч)
+  0123456789/      # chunk 1 (2 мин)
+  0123456790/      # chunk 2 (2 мин)
+  0123456800/      # chunk 3 (2 мин)
+  index/           # inverted index (labels → series)
+  wal/             # write-ahead log
+```
+
+**Chunk**:
+- **2 минуты** данных (128 samples по 15-сек интервалу).
+- **XOR encoding** (Gorilla): 1.5 бит на sample.
+- **Compressed** (zstd, lz4).
+
+**Index**:
+- **Inverted index**: `label=value → series_ids`.
+- **Postings**: для быстрых запросов.
+- **Compression**: dictionary + postings.
+
+**Compaction**:
+- Merging **12 chunks** (24 ч) → **1 large chunk**.
+- **Background**: не блокирует scrape.
+- **Result**: менее файлов, быстрее read.
+
+**Retention**:
+```yaml
+storage:
+  tsdb:
+    retention.time: 15d      # 15 дней
+    retention.size: 50GB     # или 50 GB (whichever first)
+    max-block-time: 48h      # max block duration
+```
+
+**WAL** (write-ahead log):
+- **Crash safety**: если Prometheus упадёт, WAL восстанавливает head.
+- **Truncate**: после compaction (24 ч).
+
+**Query flow**:
+1. **Parse PromQL**.
+2. **Inverted index** → найти series.
+3. **Read chunks** (head + on-disk).
+4. **Decode** (Gorilla) → samples.
+5. **Aggregate** (sum, rate, etc).
+
+**Performance tuning**:
+- **--storage.tsdb.retention.time** — retention.
+- **--web.enable-remote-write-receiver** — remote write (для Thanos).
+- **--storage.tsdb.max-block-time** — compaction period.
+- **--storage.tsdb.wal-compression** — WAL compression.
+
+**Вывод**: **Prometheus** — **TSDB** (2-минутные **chunks**, **Gorilla encoding**, **inverted index**, **compaction**). **Head** (in-memory, 2 ч) + **on-disk** (chunks) + **WAL** (crash safety). **Retention** (15 дней по умолчанию). **Query**: **index** → **chunks** → **decode** → **aggregate**.
+
+### 16. Как устроена Jaeger vs Tempo vs Grafana Cloud
+
+**Jaeger** (CNCF, graduate):
+- **Traces**: **spans** (запрос) + **trace** (цепочка spans).
+- **Storage**: **Cassandra**, **Elasticsearch**, **Kafka**, **Badger** (embedded).
+- **Sampling**: **head-based** (client) + **tail-based** (collector).
+- **UI**: **Jaeger UI** (поиск по trace, search).
+- **Scalability**: **Cassandra** — горизонтально; **Badger** — single node.
+- **Features**: **tags**, **logs**, **process** (service), **span** (operation).
+
+**Tempo** (Grafana Labs):
+- **Storage**: **S3**, **GCS**, **Blob**, **local disk**.
+- **Model**: **blocks** (похоже на Prometheus TSDB).
+- **Query**: **TraceQL** (новый query language, 2023).
+- **Tail sampling**: в **OTel Collector** (не в Tempo).
+- **UI**: **Grafana Explore** (integrated).
+- **Scalability**: **S3** — горизонтально (объектное хранилище).
+- **Cost**: **S3** — дёшево (penny per GB), retention — месяцы.
+
+**Grafana Cloud** (managed):
+- **Prometheus** (managed): **Loki** (logs) + **Tempo** (traces) + **Grafana**.
+- **All-in-one**: **1 UI** (Grafana Explore).
+- **Correlation**: metrics ↔ traces ↔ logs.
+- **Cost**: **per GB** (ingested) — дорого при high volume.
+- **Limitations**: **no self-hosting**, **vendor lock-in**.
+
+**Сравнение**:
+| Фича | Jaeger | Tempo | Grafana Cloud |
+|------|--------|-------|---------------|
+| Storage | Cassandra/ES/Badger | S3/GCS/local | managed |
+| Scalability | high (Cassandra) | high (S3) | high |
+| Cost | self-hosted | cheap (S3) | expensive |
+| Tail sampling | collector | collector | collector |
+| UI | Jaeger UI | Grafana Explore | Grafana |
+| Correlation | limited | metrics+logs+traces | metrics+logs+traces |
+| Query | trace ID | TraceQL | TraceQL + PromQL + LogQL |
+| Self-hosted | yes | yes | no |
+
+**Выбор**:
+- **On-premises**, **high volume**: **Jaeger** (Cassandra) или **Tempo** (S3).
+- **Cloud**, **correlation**: **Grafana Cloud** (managed).
+- **Low cost**, **retention**: **Tempo** (S3).
+
+**Вывод**: **Jaeger** (Cassandra/ES, self-hosted), **Tempo** (S3, TraceQL, low cost), **Grafana Cloud** (managed, all-in-one). **Выбор**: **on-premises** → **Jaeger/Tempo**, **cloud** → **Grafana Cloud**, **low cost** → **Tempo** (S3).
+
+### 17. Что такое structured logging и как настроить MDC в Java
+
+**Structured logging** = логи в **structured format** (JSON) с **fields** (не просто строка).
+
+**Пример**:
+```json
+{
+  "timestamp": "2024-01-15T10:30:45.123Z",
+  "level": "INFO",
+  "logger": "com.example.OrderService",
+  "thread": "http-nio-8080-exec-1",
+  "message": "Заказ создан",
+  "traceId": "a1b2c3d4e5f6",
+  "spanId": "1234567890",
+  "orderId": "order_12345",
+  "userId": "user_42",
+  "duration_ms": 125
+}
+```
+
+**Почему structured**:
+1. **Поиск**: `orderId = "order_12345"` (не regex по строке).
+2. **Aggregation**: `avg(duration_ms) by status`.
+3. **Correlation**: **traceId** + **spanId** → **distributed tracing**.
+4. **Filtering**: по **field** (не по **message**).
+
+**MDC** (Mapped Diagnostic Context):
+- **ThreadLocal**-based map: key → value.
+- **Log4j2/Logback** — используют MDC в layout.
+- **Spring Boot** — **`MDC.put`** в filter.
+
+**Настройка (Logback + JSON)**:
+```xml
+<dependency>
+  <groupId>net.logstash.logback</groupId>
+  <artifactId>logstash-logback-encoder</artifactId>
+  <version>7.4</version>
+</dependency>
+```
+```xml
+<appender name="JSON" class="net.logstash.logback.LogstashEncoder">
+  <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+    <customFields>{"app":"orders-service"}</customFields>
+  </encoder>
+</appender>
+```
+
+**MDC + Spring Boot**:
+```java
+@Component
+@Order(Ordered.HIGHEST_PRECEDENCE)
+public class TraceFilter extends OncePerRequestFilter {
+  @Override
+  protected void doFilterInternal(HttpServletRequest request,
+                                   HttpServletResponse response,
+                                   FilterChain chain) throws Exception {
+    String traceId = request.getHeader("X-Trace-Id");
+    if (traceId == null) {
+      traceId = UUID.randomUUID().toString();
+    }
+    MDC.put("traceId", traceId);
+    MDC.put("requestId", request.getRequestURI());
+    try {
+      chain.doFilter(request, response);
+    } finally {
+      MDC.clear();
+    }
+  }
+}
+```
+
+**Correlation с OTel**:
+```java
+@Aspect
+@Component
+public class TraceAspect {
+  @Around("execution(* com.example..*.*(..))")
+  public Object trace(ProceedingJoinPoint pjp) throws Throwable {
+    Span span = Span.current();
+    MDC.put("traceId", span.getSpanContext().getTraceId());
+    MDC.put("spanId", span.getSpanContext().getSpanId());
+    try {
+      return pjp.proceed();
+    } finally {
+      MDC.remove("traceId");
+      MDC.remove("spanId");
+    }
+  }
+}
+```
+
+**Thread-safety**: **MDC** — **ThreadLocal** → не передаётся между потоками (в **CompletableFuture**/**ExecutorService**).
+
+**Решение**:
+- **Micrometer** **Context Propagation**:
+  ```java
+  ContextRegistry.getInstance().registerThreadLocalAccessor(
+    "mdc",
+    () -> MDC.getCopyOfContextMap(),
+    ctx -> MDC.setContextMap(ctx),
+    MDC::clear
+  );
+  ```
+- **TTL** (TransmittableThreadLocal, Alibaba) — для **ExecutorService**.
+
+**Вывод**: **structured logging** = **JSON** логи с **fields** (не строка). **MDC** — **ThreadLocal** map для **traceId**/**spanId**/**userId**. **LogstashEncoder** (Logback) — JSON layout. **Correlation** с OTel через **MDC**. **Thread-safety**: **Context Propagation** (Micrometer) / **TTL** (Alibaba).
+
+### 18. Как настроить distributed tracing: OTel SDK, propagation, context
+
+**Distributed tracing** = отслеживание **request** через **микросервисы** (1 **trace** = 1 request, **N spans** = N операций).
+
+**OTel SDK (Java)**:
+```xml
+<dependency>
+  <groupId>io.opentelemetry</groupId>
+  <artifactId>opentelemetry-sdk</artifactId>
+  <version>1.24.0</version>
+</dependency>
+<dependency>
+  <groupId>io.opentelemetry</groupId>
+  <artifactId>opentelemetry-sdk-trace</artifactId>
+</dependency>
+```
+
+**Initialization**:
+```java
+OpenTelemetrySdk sdk = OpenTelemetrySdk.builder()
+  .setTracerProvider(
+    SdkTracerProvider.builder()
+      .addSpanProcessor(BatchSpanProcessor.builder(
+        OtlpGrpcSpanExporter.builder()
+          .setEndpoint("http://otel-collector:4317")
+          .build()).build())
+      .setSampler(Sampler.parentBasedRootSampler(
+        Sampler.traceIdRatioBased(0.1)  // 10% traces
+      ))
+      .build()
+  )
+  .buildAndRegisterGlobal();
+```
+
+**Propagation** (context между services):
+- **W3C TraceContext** (стандарт): `traceparent: 00-<trace_id>-<span_id>-<flags>`.
+- **B3** (Zipkin): `X-B3-TraceId`, `X-B3-SpanId`, `X-B3-Sampled`.
+- **OTel propagator**: **`TraceContextPropagator`**.
+
+```java
+OpenTelemetry otel = OpenTelemetrySdk.builder()
+  .setPropagators(ContextPropagators.create(
+    W3CTraceContextPropagator.getInstance()
+  ))
+  .build();
+```
+
+**Manual instrumentation**:
+```java
+Tracer tracer = GlobalOpenTelemetry.getTracer("my-app");
+Span span = tracer.spanBuilder("order.create")
+  .setAttribute("order.id", orderId)
+  .setAttribute("order.status", "success")
+  .startSpan();
+try (Span span = tracer.spanBuilder("order.create")
+      .setAttribute("order.id", orderId)
+      .startSpan()) {
+  orderService.create(order);
+}
+```
+
+**Auto-instrumentation** (OTel Java agent):
+```bash
+java -javaagent:opentelemetry-javaagent.jar \
+     -Dotel.traces.exporter=otlp \
+     -Dotel.metrics.exporter=otlp \
+     -Dotel.logs.exporter=otlp \
+     -Dotel.service.name=orders-service \
+     -Dotel.traces.sampler=parentbased_traceidratio:0.1 \
+     -jar app.jar
+```
+- **Spring Boot**, **Servlet**, **JDBC**, **gRPC**, **Kafka** — **auto-instrumented**.
+
+**OTel Collector**:
+- **Receive** (OTLP gRPC/HTTP) → **process** (sampling, filtering) → **export** (Jaeger/Tempo).
+- **Batching**: 5000 spans или 5 сек (whichever first).
+- **Tail sampling**: **errors**/**slow** traces — 100%, **normal** — 10%.
+
+```yaml
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch:
+    send_batch_size: 5000
+    timeout: 5s
+  tailsampling:
+    decision_wait: 1s
+    policies:
+      - name: errors
+        type: status_code
+        status_code: {codes: [ERROR]}
+      - name: slow
+        type: probabilistic
+        probabilistic: {sample_ratio: 0.1}
+
+exporters:
+  otlp/tempo:
+    endpoint: tempo:4317
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch, tailsampling]
+      exporters: [otlp/tempo]
+```
+
+**Correlation**: **MDC** (logs) + **trace_id**/**span_id** в **Prometheus labels** (через **Micrometer**/**OTel bridge**).
+
+**Вывод**: **OTel SDK** (Tracer, Span, Sampler) + **Propagation** (W3C TraceContext) + **OTel Java agent** (auto-instrumentation) + **OTel Collector** (batching, tail sampling) + **Tempo** (storage). **Correlation**: **MDC** (logs) + **trace_id** (metrics).
+
+### 19. Что такое SLO-based alerting и burn rate
+
+**SLO** (Service Level Objective) = **целевой уровень** (например: **99.9%** uptime).
+
+**SLI** (Service Level Indicator) = **метрика**, по которой считается SLO (например: % **successful requests**).
+
+**SLA** (Service Level Agreement) = **контракт** с клиентом (если не SLA — **penalty**).
+
+**Error budget** = **1 - SLO** (например: **1 - 99.9% = 0.1%**).
+- **0.1% × 30 дней × 86400 сек = 259 сек** (допустимый downtime за месяц).
+
+**Burn rate** = **скорость** расходования error budget:
+- **Burn rate 1** = расход по плану (100% error budget за 30 дней).
+- **Burn rate 2** = 2× быстрее (error budget за 15 дней).
+- **Burn rate 10** = 10× быстрее (error budget за 3 дня).
+- **Burn rate 100** = очень быстро (error budget за несколько часов).
+
+**SLO-based alerting** (Google SRE):
+- **Multi-window, multi-burn-rate**: 2 окна (1 час + 6 часов) + 2 burn rates (5× + 1×).
+- **Page** (critical): **burn rate 5×** за **1 час** → **page** (телефон).
+- **Ticket** (warning): **burn rate 1×** за **6 часов** → **ticket** (Slack).
+
+**Пример (Prometheus)**:
+```promql
+# SLI: fraction of successful requests (200-299):
+sum(rate(http_requests_total{status=~"2.."}[5m]))
+/
+sum(rate(http_requests_total[5m]))
+
+# SLO: 99.9% (error budget 0.1%):
+# Burn rate 5× (1h window, 5× faster than 0.1%):
+(
+  1 - (
+    sum(rate(http_requests_total{status=~"2.."}[1h]))
+    /
+    sum(rate(http_requests_total[1h]))
+  )
+) > (5 * 0.001)  # 5× 0.1% = 0.5%
+
+# Burn rate 1× (6h window, 1× faster than 0.1%):
+(
+  1 - (
+    sum(rate(http_requests_total{status=~"2.."}[6h]))
+    /
+    sum(rate(http_requests_total[6h]))
+  )
+) > (1 * 0.001)  # 1× 0.1% = 0.1%
+```
+
+**Alertmanager**:
+```yaml
+- alert: HighErrorRatePage
+  expr: (1 - (sum(rate(http_requests_total{status=~"2.."}[1h])) / sum(rate(http_requests_total[1h])))) > 0.005
+  for: 5m
+  labels:
+    severity: page
+  annotations:
+    summary: "SLO burn rate 5× — page on-call"
+
+- alert: HighErrorRateTicket
+  expr: (1 - (sum(rate(http_requests_total{status=~"2.."}[6h])) / sum(rate(http_requests_total[6h])))) > 0.001
+  for: 30m
+  labels:
+    severity: ticket
+  annotations:
+    summary: "SLO burn rate 1× — ticket"
+```
+
+**Почему SLO-based**:
+- **Не alert** на **cause** (например: "CPU high") — **alert** на **symptom** (например: "error rate high").
+- **Один alert** на SLO (не 10 alerts на 10 causes).
+- **Alert fatigue** ↓ (меньше alerts, но все **meaningful**).
+
+**Вывод**: **SLO** (99.9%) + **SLI** (success rate) + **error budget** (0.1%). **Burn rate** = скорость расходования budget. **Multi-window**: 1h (page) + 6h (ticket). **SLO-based alerting** — **symptom-based** (не cause-based), **меньше alerts**, **меньше alert fatigue**.
+
+### 20. Как построить dashboard в Grafana: RED, USE, SLO
+
+**Grafana dashboard** = визуализация **metrics** (Prometheus) + **traces** (Tempo) + **logs** (Loki).
+
+**RED** (Rate, Errors, Duration) — для **services**:
+```
+┌──────────────────────────────────────┐
+│  Rate (req/s)     │  Errors (%/s)    │
+├──────────────────────────────────────┤
+│  Duration (p50/p95/p99)              │
+└──────────────────────────────────────┘
+```
+- **Rate**: `sum(rate(http_requests_total[1m])) by (status)`.
+- **Errors**: `sum(rate(http_requests_total{status=~"5.."}[1m])) / sum(rate(http_requests_total[1m]))`.
+- **Duration**: `histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[1m])) by (le))`.
+
+**USE** (Utilization, Saturation, Errors) — для **resources**:
+- **CPU**: utilization (CPU used %), saturation (load average), errors (throttled).
+- **Memory**: utilization (heap used %), saturation (GC pause), errors (OOM).
+- **Disk**: utilization (disk used %), saturation (IOPS), errors (I/O errors).
+- **Network**: utilization (bandwidth used %), saturation (queue), errors (retransmits).
+
+**SLO panel**:
+- **SLI**: success rate (line chart).
+- **Error budget**: remaining budget (gauge).
+- **Burn rate**: current burn rate (bar chart).
+- **SLO status**: 99.9% achieved? (gauge, green/red).
+
+**Пример dashboard**:
+```
+Row 1: SLO Overview
+  - SLI (success rate)
+  - Error budget remaining
+  - Burn rate
+
+Row 2: RED
+  - Rate (stacked area: 2xx, 4xx, 5xx)
+  - Errors (line)
+  - Duration (p50, p95, p99)
+
+Row 3: Resources (USE)
+  - CPU (utilization, saturation)
+  - Memory (heap, GC)
+  - Disk (I/O)
+
+Row 4: Traces
+  - Top 10 slow traces (Tempo)
+  - Error traces (Tempo)
+
+Row 5: Logs
+  - Recent errors (Loki)
+```
+
+**Grafana JSON** (фрагмент):
+```json
+{
+  "title": "Rate (req/s)",
+  "type": "timeseries",
+  "targets": [
+    {
+      "expr": "sum(rate(http_requests_total[1m])) by (status)",
+      "legendFormat": "{{status}}"
+    }
+  ]
+}
+```
+
+**Переменные**:
+- **Service**: `{{service}}` (dropdown).
+- **Environment**: `{{env}}` (prod/staging).
+- **Time range**: 1h, 6h, 24h.
+
+**Correlation**:
+- **Click** на **metric** → **traces** (Tempo, по **trace_id**).
+- **Click** на **trace** → **logs** (Loki, по **trace_id**).
+
+**Вывод**: **Grafana dashboard** = **SLO** (SLI, error budget, burn rate) + **RED** (rate, errors, duration) + **USE** (utilization, saturation, errors) + **traces** (Tempo) + **logs** (Loki). **Correlation**: **metrics** → **traces** → **logs** (по **trace_id**). **Переменные**: **service**, **env**, **time range**.
+

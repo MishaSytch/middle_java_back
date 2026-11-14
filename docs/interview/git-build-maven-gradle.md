@@ -335,3 +335,348 @@ jobs:
 
 Ключевые понятия для собеса: артефакт собирается **один раз** и проходит среды без пересборки («build once, deploy many»); параметры окружения — через конфиг, а не пересборку; тег образа = хэш коммита гарантирует воспроизводимость.
 
+
+### 15. Что такое Maven multi-module project и как его настроить
+
+**Multi-module** = **несколько** **модулей** в **1** **Maven** **проекте** (например: **parent** + **N** **child**).
+
+**Структура**:
+```
+parent/
+  pom.xml (parent, packaging=pom)
+  module-a/
+    pom.xml (child)
+  module-b/
+    pom.xml (child)
+  module-c/
+    pom.xml (child)
+```
+
+**Parent pom.xml**:
+```xml
+<project>
+  <groupId>com.example</groupId>
+  <artifactId>parent</artifactId>
+  <version>1.0</version>
+  <packaging>pom</packaging>
+  
+  <modules>
+    <module>module-a</module>
+    <module>module-b</module>
+    <module>module-c</module>
+  </modules>
+  
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-dependencies</artifactId>
+        <version>3.2.0</version>
+        <scope>import</scope>
+        <type>pom</type>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+</project>
+```
+
+**Child pom.xml**:
+```xml
+<project>
+  <parent>
+    <groupId>com.example</groupId>
+    <artifactId>parent</artifactId>
+    <version>1.0</version>
+  </parent>
+  
+  <artifactId>module-a</artifactId>
+  
+  <dependencies>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+      <!-- version inherited from parent -->
+    </dependency>
+  </dependencies>
+</project>
+```
+
+**Build**:
+```bash
+# Build all modules:
+mvn clean install
+
+# Build one module (and its dependencies):
+mvn clean install -pl module-a -am
+
+# Build module-a and its dependents:
+mvn clean install -pl module-a -amd
+```
+
+**Вывод**: **Multi-module** = **parent** (packaging=pom) + **N** **child** (module). **Parent**: **dependencyManagement** (version), **modules** (list). **Child**: **parent** (inherit), **artifactId** (module). **Build**: **mvn clean install** (all), **-pl** (one module), **-am** (with dependencies).
+
+### 16. Что такое BOM (Bill of Materials) и как он помогает управлять версиями
+
+**BOM** (Bill of Materials) = **список** **версий** **зависимостей** (не **реальные** **зависимости**).
+
+**Проблема**: **10** **модулей** → **10** **разных** **версий** **Spring Boot** → **incompatibility**.
+
+**BOM** (Spring Boot):
+```xml
+<dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-dependencies</artifactId>
+      <version>3.2.0</version>
+      <scope>import</scope>
+      <type>pom</type>
+    </dependency>
+  </dependencies>
+</dependencyManagement>
+```
+- **Import** BOM → **все** **Spring Boot** **зависимости** имеют **версию** **3.2.0**.
+- **Child** **модули**: **без** **version** (inherit от **BOM**).
+
+**Кастомный BOM**:
+```xml
+<!-- my-bom/pom.xml -->
+<project>
+  <groupId>com.example</groupId>
+  <artifactId>my-bom</artifactId>
+  <version>1.0</version>
+  <packaging>pom</packaging>
+  
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>com.example</groupId>
+        <artifactId>module-a</artifactId>
+        <version>1.0</version>
+      </dependency>
+      <dependency>
+        <groupId>com.example</groupId>
+        <artifactId>module-b</artifactId>
+        <version>1.0</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+</project>
+```
+
+**Использование**:
+```xml
+<dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>com.example</groupId>
+      <artifactId>my-bom</artifactId>
+      <version>1.0</version>
+      <scope>import</scope>
+      <type>pom</type>
+    </dependency>
+  </dependencies>
+</dependencyManagement>
+```
+
+**Вывод**: **BOM** = **список** **версий** (не **реальные** **зависимости**). **Import** BOM → **все** **зависимости** имеют **версию** от **BOM**. **Spring Boot**: **spring-boot-dependencies**. **Кастомный BOM**: **my-bom** (список **версий** **модулей**).
+
+### 17. Как настроить Gradle для multi-module проекта
+
+**Gradle multi-module**:
+```
+root/
+  settings.gradle
+  build.gradle
+  module-a/
+    build.gradle
+  module-b/
+    build.gradle
+```
+
+**settings.gradle**:
+```groovy
+rootProject.name = 'parent'
+include 'module-a'
+include 'module-b'
+```
+
+**root build.gradle**:
+```groovy
+allprojects {
+  group = 'com.example'
+  version = '1.0'
+  
+  repositories {
+    mavenCentral()
+  }
+}
+
+subprojects {
+  apply plugin: 'java'
+  
+  java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+  }
+  
+  dependencies {
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.0'
+  }
+}
+```
+
+**module-a/build.gradle**:
+```groovy
+dependencies {
+  implementation 'org.springframework.boot:spring-boot-starter-web:3.2.0'
+  implementation project(':module-b')  // Depend on module-b
+}
+```
+
+**Build**:
+```bash
+# Build all:
+./gradlew build
+
+# Build one module:
+./gradlew :module-a:build
+
+# Build with dependencies:
+./gradlew :module-a:build --include-deps
+```
+
+**Вывод**: **Gradle multi-module**: **settings.gradle** (include), **root build.gradle** (allprojects, subprojects), **module build.gradle** (dependencies). **Build**: **./gradlew build** (all), **:module-a:build** (one).
+
+### 18. Что такое Maven profiles и как их использовать
+
+**Maven profiles** = **условные** **секции** **pom.xml** (активируются по **условию**).
+
+**Пример**:
+```xml
+<profiles>
+  <profile>
+    <id>dev</id>
+    <activation>
+      <activeByDefault>true</activeByDefault>
+    </activation>
+    <properties>
+      <db.url>jdbc:postgresql://localhost:5432/dev</db.url>
+    </properties>
+  </profile>
+  
+  <profile>
+    <id>prod</id>
+    <properties>
+      <db.url>jdbc:postgresql://prod:5432/prod</db.url>
+    </properties>
+  </profile>
+</profiles>
+```
+
+**Использование**:
+```bash
+# Dev (default):
+mvn clean install
+
+# Prod:
+mvn clean install -Pprod
+```
+
+**Activation**:
+```xml
+<activation>
+  <property>
+    <name>env</name>
+    <value>prod</value>
+  </property>
+</activation>
+```
+- **Activate** если **env=prod** (например: **mvn -Denv=prod**).
+
+**Вывод**: **Maven profiles** = **условные** **секции** **pom.xml** (активируются по **условию**). **Dev** (default), **Prod** (**-Pprod**). **Activation**: **property** (например: **env=prod**).
+
+### 19. Как отлаживать проблемы с зависимостями (dependency tree, conflict)
+
+**Зависимости** = **дерево** (transitive). **Конфликт** = **2** **разных** **версии** **одной** **зависимости**.
+
+**Maven**:
+```bash
+# Show dependency tree:
+mvn dependency:tree
+
+# Show specific dependency:
+mvn dependency:tree -Dincludes=org.springframework
+
+# Resolve conflicts:
+mvn dependency:analyze
+```
+
+**Gradle**:
+```bash
+# Show dependency tree:
+./gradlew dependencies
+
+# Show specific configuration:
+./gradlew dependencies --configuration=runtimeClasspath
+
+# Resolve conflicts:
+./gradlew dependencyInsight --dependency=org.springframework
+```
+
+**Конфликт** (Maven):
+```
+[INFO] +- org.springframework:spring-core:5.3.20
+[INFO] \- com.example:lib:1.0
+[INFO]    \- org.springframework:spring-core:5.3.19  ← CONFLICT
+```
+
+**Решение**:
+1. **Exclude**:
+   ```xml
+   <dependency>
+     <groupId>com.example</groupId>
+     <artifactId>lib</artifactId>
+     <exclusions>
+       <exclusion>
+         <groupId>org.springframework</groupId>
+         <artifactId>spring-core</artifactId>
+       </exclusion>
+     </exclusions>
+   </dependency>
+   ```
+2. **Dependency management** (BOM).
+3. **Override** (explicit version).
+
+**Вывод**: **Dependency tree**: **mvn dependency:tree** (Maven), **./gradlew dependencies** (Gradle). **Конфликт**: **2** **разных** **версии**. **Решение**: **exclude**, **BOM**, **override**.
+
+### 20. Что такое reproducible build и почему он важен
+
+**Reproducible build** = **1** **source** → **1** **binary** (не **N** **разных** **binary**).
+
+**Проблема**:
+- **1** **source** → **N** **build** → **N** **разных** **binary** (timestamp, file order).
+- **CI/CD**: **1** **build** в **CI** → **deploy** в **prod** (но **binary** **разный**).
+- **Security**: **audit** **binary** (но **binary** **не** **reproducible** → **audit** **не** **валиден**).
+
+**Причины не-reproducible**:
+1. **Timestamp** (например: **MANIFEST.MF**).
+2. **File order** (например: **JAR** file order).
+3. **Path** (например: **absolute path** в **JAR**).
+
+**Maven reproducible**:
+```bash
+# Set fixed timestamp:
+mvn clean package -Dproject.build.outputTimestamp=2024-01-01T00:00:00Z
+```
+
+**Gradle reproducible**:
+```groovy
+tasks.withType(AbstractArchiveTask) {
+  preserveFileOrder = true
+  duplicatePreservingFileOrder = true
+}
+```
+
+**Вывод**: **Reproducible build** = **1** **source** → **1** **binary**. **Причины не-reproducible**: **timestamp**, **file order**, **path**. **Maven**: **-Dproject.build.outputTimestamp**. **Gradle**: **preserveFileOrder**. **Важность**: **CI/CD** (1 **build** → **deploy**), **security** (audit **binary**).
+

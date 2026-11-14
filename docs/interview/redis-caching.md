@@ -39,6 +39,25 @@ try (Jedis jedis = pool.getResource()) {
 
 **Cache-Aside (Lazy Loading)** — самый распространённый паттерн кэширования: приложение само управляет кэшем, БД остаётся источником истины.
 
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
+flowchart LR
+    classDef client fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef service fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef storage fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+
+    App["Application"]:::client
+    Redis[("Redis Cache")]:::storage
+    DB[("PostgreSQL")]:::storage
+
+    App -->|"1. GET user:42"| Redis
+    Redis -->|"2a. HIT: return"| App
+    Redis -->|"2b. MISS"| App
+    App -->|"3. SELECT FROM users"| DB
+    DB -->|"4. row"| App
+    App -->|"5. SET user:42 EX 600"| Redis
+```
+
 Чтение: 1) ищем в кэше — **cache hit**: возвращаем; 2) **cache miss**: читаем из БД, кладём в кэш с TTL, возвращаем. Запись: сохраняем в БД, затем **инвалидируем** кэш (удалить ключ), а не обновляем его.
 
 ```java
@@ -291,4 +310,291 @@ public void unlock(String key, String owner) {
 
 Практика для собеса: кэш и сессии — Sentinel достаточно; большой объём или высокая нагрузка записи — Cluster; данные, обрабатываемые мультиключевыми операциями, группируйте hash-tag'ами.
 
+
+
+### 15. Что такое cache warming и как избежать cold start
+
+**Проблема**: **cold start** (пустой кэш после **restart**) → **N** **requests** → **N** **DB queries** → **load spike**.
+
+**Cache warming** = **pre-populate** кэш до **traffic**:
+1. **Eager loading**: **загружаем** **hot keys** при **startup**.
+2. **Lazy loading**: **пополняем** по **first request** (но **slow**).
+3. **Background**: **background job** (например: **cron**) → **populate** **cache**.
+
+**Пример (Eager loading)**:
+```java
+@Component
+public class CacheWarmer {
+  @Autowired private CacheManager cacheManager;
+  @Autowired private ProductRepository productRepo;
+  
+  @EventListener(ApplicationReadyEvent.class)
+  public void warmUp() {
+    Cache cache = cacheManager.getCache("products");
+    // Hot products (top 1000 by view count):
+    List<Product> hot = productRepo.findTop1000ByViews();
+    for (Product p : hot) {
+      cache.put(p.getId(), p);
+    }
+    log.info("Cache warmed: {} products", hot.size());
+  }
+}
+```
+
+**Background warming**:
+```java
+@Scheduled(cron = "0 0 * * * *")  // hourly
+public void refreshCache() {
+  List<Product> hot = productRepo.findTop1000ByViews();
+  for (Product p : hot) {
+    cache.put(p.getId(), p);  // overwrite
+  }
+}
+```
+
+**Lazy warming** (по **first request**):
+```java
+@Cacheable(value = "products", key = "#id")
+public Product getProduct(Long id) {
+  return productRepo.findById(id);  // first call → DB, next → cache
+}
+```
+
+**Выбор**:
+| Метод | Когда | Pros | Cons |
+|-------|-------|------|------|
+| **Eager** | **hot keys** (известны) | **no cold start** | **memory** (все **hot keys**) |
+| **Background** | **periodic refresh** | **fresh** | **memory** |
+| **Lazy** | **unknown keys** | **memory** (только **accessed**) | **cold start** |
+
+**Вывод**: **cache warming** = **eager** (**hot keys** при **startup**), **background** (**periodic refresh**), **lazy** (**first request**). **Eager** — **no cold start**, **memory**. **Background** — **fresh**. **Lazy** — **memory** (только **accessed**).
+
+### 16. Как выбрать TTL для кэша: trade-off между freshness и hit rate
+
+**TTL** (Time-To-Live) = **сколько** **время** **ключ** **живёт** в **кэше**.
+
+**Trade-off**:
+- **Короткий TTL** (например: **1 мин**): **fresh** (но **low hit rate**, **high DB load**).
+- **Длинный TTL** (например: **1 час**): **high hit rate** (но **stale**).
+
+**Выбор TTL**:
+1. **Data volatility**: **как часто** **меняется** **data**?
+   - **Rarely** (например: **reference data**) → **длинный TTL** (1 час).
+   - **Often** (например: **stock price**) → **короткий TTL** (1 мин).
+2. **Business requirements**: **насколько** **важен** **freshness**?
+   - **Critical** (например: **payment**) → **короткий TTL** (1 мин).
+   - **Non-critical** (например: **product description**) → **длинный TTL** (1 час).
+3. **DB load**: **сколько** **DB queries** **допустимо**?
+   - **Low** (например: **read-heavy**) → **длинный TTL** (1 час).
+   - **High** (например: **write-heavy**) → **короткий TTL** (1 мин).
+
+**Примеры**:
+| Ключ | TTL | Почему |
+|------|-----|--------|
+| **Product** (description) | 1 час | **rarely changes**, **low criticality** |
+| **Stock price** | 1 мин | **changes often**, **high criticality** |
+| **User profile** | 30 мин | **sometimes changes**, **medium criticality** |
+| **Session** | 30 мин | **user inactivity** |
+| **Reference data** (countries) | 24 часа | **almost never changes** |
+
+**Jitter** (случайный **offset**):
+```java
+// Без jitter: все keys expire одновременно → stampede.
+int ttl = 3600;  // 1 hour
+
+// С jitter: keys expire в разное время → no stampede.
+int ttl = 3600 + ThreadLocalRandom.current().nextInt(600);  // 1h + 0-10min
+```
+
+**Вывод**: **TTL** зависит от **data volatility**, **business requirements**, **DB load**. **Короткий TTL** = **fresh** (но **low hit rate**). **Длинный TTL** = **high hit rate** (но **stale**). **Jitter** — **avoid stampede**.
+
+### 17. Как Redis справляется с memory pressure: eviction policies
+
+**Memory pressure** = **memory** **Redis** **полна** → **нужно** **выбросить** **keys**.
+
+**Eviction policies** (политики **выброса**):
+| Policy | Описание |
+|--------|----------|
+| **noeviction** | **не выбрасывать** (новые **writes** → **error**) |
+| **allkeys-lru** | **выбросить** **LRU** (least recently used) из **все** **keys** |
+| **allkeys-lfu** | **выбросить** **LFU** (least frequently used) из **все** **keys** |
+| **allkeys-random** | **выбросить** **random** из **все** **keys** |
+| **volatile-lru** | **выбросить** **LRU** из **keys с TTL** |
+| **volatile-lfu** | **выбросить** **LFU** из **keys с TTL** |
+| **volatile-random** | **выбросить** **random** из **keys с TTL** |
+| **volatile-ttl** | **выбросить** **ключ с минимальным TTL** из **keys с TTL** |
+
+**Выбор**:
+- **Cache** (все **keys** — **cache**) → **allkeys-lru** (или **allkeys-lfu**).
+- **Session** (keys с **TTL**) → **volatile-lru** (или **volatile-lfu**).
+- **Critical data** (не **выбрасывать**) → **noeviction** (но **writes** → **error**).
+
+**Настройка**:
+```bash
+# Redis config:
+maxmemory 1gb
+maxmemory-policy allkeys-lru
+```
+```yaml
+# docker-compose:
+redis:
+  command: redis-server --maxmemory 1gb --maxmemory-policy allkeys-lru
+```
+
+**LRU vs LFU**:
+- **LRU** (Least Recently Used): **выбросить** **ключ**, **который** **не** **использовался** **давно**.
+- **LFU** (Least Frequently Used): **выбросить** **ключ**, **который** **используется** **редко**.
+- **LRU** — **проще** (O(1)), **LFU** — **точнее** (но **сложнее**).
+
+**Вывод**: **memory pressure** → **eviction policy**. **Cache** → **allkeys-lru** (или **allkeys-lfu**). **Session** (keys с **TTL**) → **volatile-lru**. **Critical data** → **noeviction** (но **writes** → **error**). **LRU** — **проще**, **LFU** — **точнее**.
+
+### 18. Как работать с Redis Streams и когда их использовать
+
+**Redis Streams** = **append-only log** (похоже на **Kafka**, но **in-memory**).
+
+**Когда использовать**:
+1. **Lightweight messaging** (не **Kafka**, но **message queue**).
+2. **Consumer groups** (например: **N** **consumers** читают **1** **stream**).
+3. **At-least-once delivery** (message не **теряется**).
+4. **In-memory** (быстрее **Kafka**, но **без persist**).
+
+**Пример**:
+```java
+// Producer:
+Jedis jedis = new Jedis("localhost");
+jedis.xadd("orders", StreamEntry.ID.NEW, "orderId", "order_12345", "amount", "100");
+
+// Consumer group:
+jedis.xgroupCreate("orders", "workers", StreamEntry.INF_ID, true);
+List<Map<String, String>> messages = jedis.xread(
+  XReadParams.xreadParams().group("orders", "worker-1").count(10),
+  new String[]{"orders", ">"}
+);
+```
+
+**Consumer groups**:
+- **XGROUP CREATE** stream group $ create group.
+- **XREADGROUP** group consumer > read messages.
+- **XACK** stream group consumer message_id acknowledge.
+
+**Вывод**: **Redis Streams** = **lightweight messaging** (не **Kafka**). **Consumer groups** (N **consumers** → 1 **stream**). **At-least-once** (message не **теряется**). **In-memory** (быстрее **Kafka**, но **без persist**).
+
+### 19. Как оптимизировать Redis pipeline и batching
+
+**Pipeline** = **batch** **commands** → **1** **round-trip** (не **N**).
+
+**Пример**:
+```java
+// Без pipeline: N round-trips.
+for (int i = 0; i < 1000; i++) {
+  jedis.set("key" + i, "value" + i);  // 1000 round-trips
+}
+
+// С pipeline: 1 round-trip.
+Pipeline p = jedis.pipelined();
+for (int i = 0; i < 1000; i++) {
+  p.set("key" + i, "value" + i);  // batch
+}
+p.sync();  // 1 round-trip
+```
+
+**Batching**:
+- **Партия** **N** **commands** → **1** **request**.
+- **Response**: **N** **responses** (но **1** **round-trip**).
+
+**Когда использовать**:
+- **Bulk load** (например: **1000** **keys**).
+- **Fan-out** (например: **N** **keys** → **1** **DB query**).
+- **Low latency** (например: **< 1ms**).
+
+**Ограничения**:
+- **Memory**: **pipeline** → **memory** (buffer).
+- **Ordering**: **pipeline** → **FIFO** (order сохранён).
+- **Error handling**: **1 error** → **все** **commands** в **batch** **error** (или **retry**).
+
+**Вывод**: **pipeline** = **batch** **commands** → **1** **round-trip** (не **N**). **Bulk load** (1000 **keys**), **fan-out**, **low latency**. **Memory** (buffer), **ordering** (FIFO), **error handling** (1 error → **retry**).
+
+### 20. Как настроить Redis в Kubernetes: statefulset, persistence
+
+**K8s + Redis** = **StatefulSet** (stateful service) + **PVC** (persistent volume claim).
+
+**StatefulSet**:
+- **Stable network identity** (например: **redis-0**, **redis-1**, **redis-2**).
+- **Stable storage** (PVC на **replica**).
+- **Ordered deployment** (redis-0 → redis-1 → redis-2).
+
+**Пример**:
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+spec:
+  serviceName: redis
+  replicas: 3
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7
+        command: ["redis-server", "--appendonly", "yes"]
+        ports:
+        - containerPort: 6379
+        volumeMounts:
+        - mountPath: /data
+          name: data
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 10Gi
+```
+
+**PVC** (Persistent Volume Claim):
+- **Storage**: **10Gi** (например: **EBS** в **AWS**).
+- **Access mode**: **ReadWriteOnce** (1 **pod** → 1 **PVC**).
+- **Retain**: **data** **сохраняется** после **delete** **pod**.
+
+**Service**:
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  clusterIP: None  # Headless service
+  selector:
+    app: redis
+  ports:
+  - port: 6379
+```
+- **Headless service** (clusterIP: None) → **DNS** **redis-0.redis**, **redis-1.redis**, **redis-2.redis**.
+
+**Sentinel** (high availability):
+```yaml
+# redis-sentinel (3 replicas):
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-sentinel
+spec:
+  replicas: 3
+  template:
+    spec:
+      containers:
+      - name: sentinel
+        image: redis:7
+        command: ["redis-sentinel", "/etc/redis/sentinel.conf"]
+```
+
+**Вывод**: **K8s + Redis** = **StatefulSet** (stable identity, storage) + **PVC** (persistent volume) + **headless service** (DNS). **Sentinel** (high availability). **Retain** (data **сохраняется** после **delete** **pod**).
 

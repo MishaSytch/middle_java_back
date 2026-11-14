@@ -7,6 +7,18 @@
 - **Stack (стек)**: используется для хранения **локальных переменных** и **фреймов методов**. Когда вызывается метод, в стеке создаётся фрейм для этого метода, содержащий его локальные переменные и служебную информацию. Когда метод завершается, его фрейм уничтожается. Память стека организована как LIFO (Last-In-First-Out) и управляется автоматически при входе в метод и выходе из него. У каждого потока есть свой собственный стек.
 - **Heap (куча)**: используется для хранения **всех объектов** (создаваемых через `new`) и **массивов**. Это общая область памяти для всех потоков. Объекты в куче живут до тех пор, пока на них есть достижимые ссылки (из стека, статических полей и т.д.). Когда объект становится недостижимым, он может быть удалён сборщиком мусора (Garbage Collector). Память в куче не освобождается автоматически при выходе из метода — для этого нужен GC.
 
+```java
+public class MemoryDemo {
+    void method() {
+        int local = 42;          // → Stack (примитив)
+        String ref = "hello";    // ссылка → Stack, объект "hello" → Heap
+        Object obj = new Object(); // объект → Heap, ссылка → Stack
+        // при выходе из method(): фрейм (local, ref) удаляется из Stack,
+        // obj в Heap живёт, пока есть другие ссылки
+    }
+}
+```
+
 **Ключевое отличие**: стек — это быстрая, автоматически управляемая память для локальных переменных с временем жизни, ограниченным вызовом метода. Куча — это более медленная, но более гибкая память для объектов с временем жизни, определяемым достижимостью ссылок.
 
 
@@ -187,10 +199,37 @@ flowchart TB
 
 **G1 (Garbage-First) GC** — это сборщик мусора, представленный в Java 7 и ставший стандартным в Java 9. Он предназначен для **серверных приложений** с большими объёмами памяти (4–64 ГБ) и требованием к предсказуемым паузам. G1 делит кучу на множество **регионов** (regions) одинакового размера и собирает в первую очередь те регионы, которые содержат больше всего мусора (отсюда «Garbage-First»). Он является **поколенческим**, **параллельным** и **преимущественно конкурентным** сборщиком с **ограниченными паузами** (`-XX:MaxGCPauseMillis`). Критические фазы (например, initial mark, remark) выполняются с короткими паузами `stop-the-world`.
 
+```java
+// Настройка G1 для серверного приложения (Java 17+)
+// java -XX:+UseG1GC -Xms4g -Xmx4g \
+//      -XX:MaxGCPauseMillis=200 \
+//      -XX:G1HeapRegionSize=16m \
+//      -XX:InitiatingHeapOccupancyPercent=45 \
+//      -jar app.jar
+
+// Ключевые параметры:
+// -XX:MaxGCPauseMillis=200       — целевая пауза (G1 стремится, но не гарантирует)
+// -XX:G1HeapRegionSize=16m       — размер региона (64KB..32MB)
+// -XX:InitiatingHeapOccupancyPercent=45 — начать concurrent marking при 45% heap
+// -XX:G1ReservePercent=10        — резерв для live-объектов при перемещении
+```
+
 
 ### 14. Что такое ZGC
 
 **ZGC (Z Garbage Collector)** — это масштабируемый сборщик мусора с **низкой задержкой**, представленный в Java 11 (экспериментально) и стабильный в Java 15. Его главная особенность — **паузы `stop-the-world` менее 1 миллисекунды**, которые **не зависят от размера кучи** (даже для кучи в несколько терабайт). ZGC выполняет почти всю работу (маркировку, перемещение объектов, компактизацию) **конкурентно**, пока приложение продолжает работать. Он использует **цветные указатели (colored pointers)** и **барьеры загрузки (load barriers)** для отслеживания ссылок. ZGC идеален для приложений с экстремально низкими требованиями к задержкам и очень большими кучами.
+
+```java
+// Запуск с ZGC (Java 15+)
+// java -XX:+UseZGC -Xms16g -Xmx64g -jar app.jar
+//
+// Java 21: ZGC по умолчанию для больших куч, generational ZGC
+// java -XX:+UseZGC -XX:+ZGenerational -Xmx64g -jar app.jar
+//
+// Мониторинг:
+// jcmd <pid> GC.heap_info
+// jstat -gc <pid> 1000   — каждые секунду
+```
 
 
 ### 15. Что такое Shenandoah GC
@@ -273,6 +312,34 @@ java -Xms4g -Xmx4g -XX:+UseG1GC -jar app.jar
 - **`Unable to create native thread`**: ОС не может создать новый поток (достигнут лимит потоков в системе). Часто возникает при неограниченном создании потоков без пула.
 - **`Direct buffer memory`**: исчерпана память, выделенная для прямых (`DirectByteBuffer`) буферов вне кучи (`-XX:MaxDirectMemorySize`).
 
+```java
+// Протекция от OOM: graceful degradation
+public class OomGuard {
+    // 1. Heap dump при OOM (в JVM args):
+    // -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/dumps/
+    
+    // 2. Catch и graceful shutdown
+    public void criticalOperation() {
+        try {
+            // бизнес-логика
+        } catch (OutOfMemoryError e) {
+            log.error("OOM detected, triggering graceful shutdown", e);
+            metrics.counter("oom.count").increment();
+            // 3. Освободить кэш (если есть)
+            cache.clear();
+            // 4. Дать GC шанс
+            System.gc();
+            // 5. Если не помогло — сигнализировать оркестратору
+            shutdownHook.run();
+        }
+    }
+}
+
+// 4. Direct buffer: ограничить и мониторить
+// -XX:MaxDirectMemorySize=512m
+// Monitoring: BufferPoolMXBean (direct buffer count/used)
+```
+
 
 ### 21. Что такое memory leak и как его обнаружить
 
@@ -344,6 +411,34 @@ jmap -dump:live,format=b,file=heap.hprof <pid>
 - JNI-ссылки (нативные ссылки).
 - Объекты, используемые в качестве мониторов для синхронизации.
 - Классы, загруженные системным загрузчиком классов.
+
+```java
+// GC roots в действии:
+public class GcRootsDemo {
+    // 1. Static field = GC root
+    private static Object staticRef = new Object(); // жив всегда
+    
+    // 2. Local variable = GC root (пока метод не завершился)
+    void method() {
+        Object local = new Object(); // жив, пока method() выполняется
+        helper(local);              // параметр = GC root в helper()
+    }
+    
+    void helper(Object param) {     // param = GC root
+        Object x = new Object();    // жив
+    }
+    
+    // 3. Thread-local value = GC root (пока поток жив)
+    private static final ThreadLocal<Object> tl = new ThreadLocal<>();
+    
+    // 4. Synchronized monitor = GC root
+    void syncMethod() {
+        synchronized (staticRef) {  // staticRef = GC root во время sync
+            // ...
+        }
+    }
+}
+```
 
 
 ### 26. Что такое reachability в контексте GC

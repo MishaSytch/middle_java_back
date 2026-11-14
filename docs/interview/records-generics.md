@@ -30,6 +30,29 @@
 
 Да, можно. В тело Record можно добавлять обычные, статические методы и константы. Это позволяет включать в запись бизнес-логику, связанную с ее данными.
 
+```java
+public record Order(long id, BigDecimal amount, LocalDate date) {
+
+    // Instance method — бизнес-логика
+    public BigDecimal discount(BigDecimal percent) {
+        return amount.multiply(percent);
+    }
+
+    // Static factory — альтернативные конструкторы
+    public static Order create(BigDecimal amount) {
+        return new Order(0L, amount, LocalDate.now());
+    }
+
+    // Compact constructor — валидация
+    public Order {
+        if (amount.signum() < 0) throw new IllegalArgumentException("amount < 0");
+    }
+}
+// new Order(1L, new BigDecimal("100"), LocalDate.now())
+// Order.create(new BigDecimal("50"))
+// order.discount(new BigDecimal("0.1")) → 10.0
+```
+
 ### 5. Какие методы автоматически генерируются для Record?
 
 Для Record автоматически генерируются:
@@ -78,6 +101,27 @@ public record Point(int x, int y) {
 
 - **Безопасность типов:** Ошибки несоответствия типов выявляются на этапе компиляции, а не во время выполнения.
 - **Устранение приведений типов:** Вы можете использовать типизированные объекты без явного приведения, что делает код чище и безопаснее.
+
+```java
+// Без дженериков: raw types + unchecked cast
+List rawList = new ArrayList();
+rawList.add("hello");
+rawList.add(42);
+String s = (String) rawList.get(1); // ClassCastException!
+
+// С дженериками: compile-time safety
+List<String> strList = new ArrayList<>();
+strList.add("hello");
+strList.add(42); // compile error: int ≠ String
+String s = strList.get(0); // без cast
+
+// Generic method
+static <T> T first(List<T> list) {
+    return list.isEmpty() ? null : list.get(0);
+}
+Integer i = first(List.of(1, 2, 3));    // T = Integer
+String st = first(List.of("a", "b"));   // T = String
+```
 - **Переиспользуемый код:** Один обобщенный алгоритм или структура данных могут работать с разными типами.
 - **Читаемость:** Код становится более понятным, так как тип элементов коллекции или параметр метода явно указан в сигнатуре.
 
@@ -99,6 +143,29 @@ public record Point(int x, int y) {
 
 - `<? extends T>` (Upper Bounded Wildcard): Означает "любой тип, который является `T` или его подтипом". Такой список можно только читать (Producer). Вы не можете добавить в него элементы (кроме `null`), так как компилятор не знает точного типа.
 - `<? super T>` (Lower Bounded Wildcard): Означает "любой тип, который является `T` или его супертипом". В такой список можно добавлять элементы типа `T` (Consumer). Читать из него можно только как `Object`.
+
+```java
+// PECS в действии
+// Producer: только читаем → extends
+static void printAll(List<? extends Number> list) {
+    for (Number n : list) {  // ✅ чтение
+        System.out.println(n);
+    }
+    // list.add(1); // ❌ compile error: не знаем точный тип
+}
+
+// Consumer: только пишем → super
+static void addNumbers(List<? super Integer> list) {
+    list.add(42);  // ✅ Integer подходит для любого super-типа
+    // Number n = list.get(0); // только Object (не Number)
+}
+
+// Использование:
+List<Integer> ints = List.of(1, 2, 3);
+List<Number> nums = new ArrayList<>();
+printAll(ints);  // ✅ List<Integer> → List<? extends Number>
+addNumbers(nums); // ✅ List<Number> → List<? super Integer>
+```
 
 ### 17. Что такое PECS (Producer Extends Consumer Super)?
 
@@ -138,6 +205,26 @@ public static <T extends Comparable<T>> T max(List<T> list) { ... }
 ### 24. Как работают дженерики с наследованием (является ли `List<String>` подтипом `List<Object>`)?
 
 Нет, `List<String>` **не** является подтипом `List<Object>`. Несмотря на то, что `String` является подтипом `Object`, для параметризованных типов это правило не работает. Это сделано для сохранения безопасности типов. Если бы `List<String>` был подтипом `List<Object>`, то через ссылку на `List<Object>` можно было бы добавить в список `Integer`, что нарушило бы его изначальный тип.
+
+```java
+// Инвариантность дженериков (invariance)
+List<String> strings = new ArrayList<>();
+// List<Object> objects = strings; // ❌ compile error!
+
+// Почему? Если бы это было разрешено:
+// List<Object> objects = strings;
+// objects.add(42); // Integer в список "строк" → Type Safety нарушен
+
+// Обход через wildcard:
+List<?> wildcard = strings; // ✅ List<?> принимает любой List
+List<? extends Object> ext = strings; // ✅ extends
+
+// Для "наследования" используйте generics правильно:
+// class Animal { }
+// class Dog extends Animal { }
+// List<Animal> a = List.of(new Dog()); // Dog в List<Animal> — OK
+// List<Dog> d = a; // ❌ даже если все элементы — Dog
+```
 
 ### 25. Что такое bridge methods и зачем они нужны?
 

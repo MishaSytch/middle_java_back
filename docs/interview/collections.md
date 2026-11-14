@@ -2,16 +2,46 @@
 
 ### 1. Какие основные интерфейсы Collection Framework
 
-Основные интерфейсы Java Collection Framework:
-- **`Collection`** — корневой интерфейс для всех коллекций (кроме `Map`). Определяет базовые методы: `add`, `remove`, `size`, `iterator`, `contains`.
-- **`List`** — упорядоченная коллекция с доступом по индексу, допускает дубликаты. Реализации: `ArrayList`, `LinkedList`, `Vector`, `Stack`.
-- **`Set`** — коллекция, не допускающая дубликатов. Реализации: `HashSet`, `LinkedHashSet`, `TreeSet`, `EnumSet`.
-- **`Queue`** — коллекция для организации очереди (обычно FIFO). Реализации: `LinkedList`, `PriorityQueue`, `ArrayDeque`, `BlockingQueue` и её наследники.
-- **`Deque`** — двусторонняя очередь (double-ended queue). Реализации: `ArrayDeque`, `LinkedList`.
-- **`Map`** — отображение «ключ-значение», не наследует `Collection`, но входит в фреймворк. Реализации: `HashMap`, `LinkedHashMap`, `TreeMap`, `Hashtable`, `ConcurrentHashMap`, `WeakHashMap`.
-- **`SortedSet`** / **`NavigableSet`** — расширения `Set` с поддержкой сортировки (`TreeSet`).
-- **`SortedMap`** / **`NavigableMap`** — расширения `Map` с сортировкой по ключу (`TreeMap`).
-- **`Iterable`** — корневой интерфейс иерархии, предоставляющий `iterator()`.
+Основные интерфейсы Java Collection Framework (фреймворк коллекций — набор интерфейсов и реализаций для хранения и обработки данных):
+- **`Collection`** (коллекция — общий базовый интерфейс) — корневой интерфейс для всех коллекций (кроме `Map`). Определяет базовые методы: `add`, `remove`, `size`, `iterator`, `contains`.
+- **`List`** (список — упорядоченная последовательность) — упорядоченная коллекция с доступом по индексу, допускает дубликаты. Реализации: `ArrayList`, `LinkedList`, `Vector`, `Stack`.
+- **`Set`** (множество — коллекция без дубликатов) — коллекция, не допускающая дубликатов. Реализации: `HashSet`, `LinkedHashSet`, `TreeSet`, `EnumSet`.
+- **`Queue`** (очередь — дисциплина FIFO: первый пришёл — первый ушёл) — коллекция для организации очереди. Реализации: `LinkedList`, `PriorityQueue`, `ArrayDeque`, `BlockingQueue` и её наследники.
+- **`Deque`** (дек — двусторонняя очередь, double-ended queue) — очередь с операциями на обоих концах. Реализации: `ArrayDeque`, `LinkedList`.
+- **`Map`** (карта/таблица — отображение «ключ-значение», key-value mapping) — не наследует `Collection`, но входит в фреймворк. Реализации: `HashMap`, `LinkedHashMap`, `TreeMap`, `Hashtable`, `ConcurrentHashMap`, `WeakHashMap`.
+- **`SortedSet`** / **`NavigableSet`** (сортируемое множество — с поддержкой навигации: `first`, `last`, `lower`, `higher`) — расширения `Set` с поддержкой сортировки (`TreeSet`).
+- **`SortedMap`** / **`NavigableMap`** (сортируемая карта — ключи в отсортированном порядке) — расширения `Map` с сортировкой по ключу (`TreeMap`).
+- **`Iterable`** (итерируемый — интерфейс, обеспечивающий обход через `iterator()`) — корневой интерфейс иерархии.
+
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
+classDiagram
+    direction TB
+    class Iterable
+    class Collection {
+        +add(E)
+        +remove(E)
+        +size()
+        +iterator()
+    }
+    class List {
+        +get(int)
+        +set(int, E)
+    }
+    class Set
+    class Queue
+    class Deque
+    class Map {
+        +get(Object)
+        +put(K, V)
+    }
+    Iterable <|-- Collection
+    Collection <|-- List
+    Collection <|-- Set
+    Collection <|-- Queue
+    Queue <|-- Deque
+    Iterable <|.. Map
+```
 
 
 ### 2. В чём разница между List, Set и Queue

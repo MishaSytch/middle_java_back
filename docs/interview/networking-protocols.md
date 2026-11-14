@@ -75,6 +75,28 @@ graph TD
 
 **Когда UDP:** DNS-запросы (быстрее, потери не критичны), стриминг (потеря кадра важнее задержки), realtime-игры.
 
+```java
+// TCP в Java (на уровне Java NIO)
+// ServerSocket — TCP server
+ServerSocket server = new ServerSocket(8080);
+Socket client = server.accept(); // блокирующий accept
+// Каждый connection = отдельный TCP-поток
+
+// UDP в Java
+DatagramSocket udp = new DatagramSocket(53);
+byte[] buf = new byte[512];
+DatagramPacket pkt = new DatagramPacket(buf, buf.length);
+udp.receive(pkt); // один packet = один запрос (без соединения)
+
+// Netty: транспорт выбирается конфигурацией
+// TCP: NioServerSocketChannel
+// UDP: NioDatagramChannel
+EventLoopGroup boss = new NioEventLoopGroup(1);
+EventLoopGroup workers = new NioEventLoopGroup();
+Channel pipeline = new NioServerSocketChannel(); // TCP
+// Channel pipeline = new NioDatagramChannel(); // UDP
+```
+
 **На middle-уровне:** уверенно объяснить таблицу и дать 2–3 примера для каждого.
 
 ### 3. Как работает TCP-соединение: handshake и teardown
@@ -693,6 +715,34 @@ server {
 | Использование  | публичные API               | фронтенд, mobile     | микросервисы (внутренние)        |
 
 **REST** — де-факто стандарт для публичных API. **GraphQL** — когда клиенту нужны «ровно те поля, что нужны» (mobile, web с разными UI). **gRPC** — между микросервисами (быстро, сильно типизировано, streaming).
+
+```java
+// gRPC в Java (Spring Boot)
+// 1. .proto файл:
+// service OrderService {
+//   rpc GetOrder (OrderRequest) returns (OrderResponse);
+//   rpc WatchOrders (OrderFilter) returns (stream OrderResponse);
+// }
+
+// 2. Generated stub (gRPC code generation):
+ManagedChannel channel = ManagedChannelBuilder
+    .forAddress("orders-service:9090")
+    .usePlaintext()
+    .build();
+OrderServiceGrpc.OrderServiceBlockingStub stub =
+    OrderServiceGrpc.newBlockingStub(channel);
+
+// Unary call
+OrderResponse order = stub.getOrder(
+    OrderRequest.newBuilder().setOrderId("123").build());
+
+// Server streaming
+OrderServiceGrpc.OrderServiceStub asyncStub =
+    OrderServiceGrpc.newStub(channel);
+asyncStub.watchOrders(filter).nextListener(order -> {
+    System.out.println("New order: " + order.getOrderId());
+});
+```
 
 **Когда что:**
 - Публичный API → REST (простота, кэширование, универсальность)

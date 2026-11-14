@@ -364,3 +364,398 @@ String handle(Result<String> result) {
 4. Is it Spring? → Either, team preference
 5. Is it performance-critical? → Java (AOT, tuning)
 6. Is it data-heavy? → Kotlin (data classes) или Java records
+
+### 8. Kotlin null-safety в interop: platform types
+**Platform types** — типы, пришедшие из Java, компилятор Kotlin не может гарантировать их null-safety.
+
+```kotlin
+// Java метод возвращает String (может быть null)
+// Kotlin видит: String! (platform type)
+val name: String! = javaObj.getName()
+
+// Компилятор НЕ ругается, но runtime может бросить NPE
+val length = name.length  // NPE если name == null
+
+// Решение: явно аннотировать Java-код
+// @Nullable String getName() — Kotlin видит String?
+// @NonNull String getName() — Kotlin видит String
+```
+
+**Аннотации (JSR 305, JetBrains annotations):**
+```java
+// Java:
+@Nullable
+public String maybeNull() { return null; }
+
+@NonNull
+public String notNull() { return "value"; }
+```
+
+**Правило:** platform types (`Type!`) — это «дыра» в null-safety. Всегда принудительно приводи к `Type?` или `Type` при interop.
+
+### 9. Kotlin collections vs Java collections
+**Различия:**
+
+| Kotlin | Java | Примечание |
+|--------|------|------------|
+| `List<T>` | `List<T>` | read-only (в Kotlin `mutableListOf` = MutableList) |
+| `MutableList<T>` | `List<T>` (mutable) | Kotlin разделяет read-only и mutable |
+| `Map<K,V>` | `Map<K,V>` | read-only |
+| `MutableMap<K,V>` | `Map<K,V>` (mutable) | mutable version |
+| `Set<T>` | `Set<T>` | read-only |
+| `MutableSet<T>` | `Set<T>` (mutable) | mutable version |
+
+```kotlin
+// Kotlin: read-only List
+val list: List<String> = listOf("a", "b")
+// list.add("c") — compile error (read-only)
+
+val mutableList: MutableList<String> = mutableListOf("a", "b")
+mutableList.add("c")  // OK
+
+// Java List передаётся в Kotlin как MutableList!
+// (потому что Java List — mutable по умолчанию)
+fun acceptList(list: List<String>) {
+    // list — read-only view
+}
+```
+
+**Параметры функций:**
+```kotlin
+// Принимает read-only List, но Java передаст mutable
+fun process(list: List<String>) {
+    // list — read-only (можно только читать)
+}
+
+// Принимает mutable List
+fun modify(list: MutableList<String>) {
+    list.add("new")  // OK
+}
+```
+
+### 10. Kotlin property vs Java field: backing field, getter, setter
+```kotlin
+class User {
+    var name: String = "Anonymous"
+    // Kotlin создаёт:
+    // private String name (backing field)
+    // public String getName()
+    // public void setName(String name)
+}
+```
+
+```java
+// Java:
+public class User {
+    private String name = "Anonymous";
+    public String getName() { return name; }
+    public void setName(String name) { this.name = name; }
+}
+```
+
+**Различия:**
+- **Kotlin property** = backing field + getter + setter (автоматически).
+- **Java field** = только поле (getter/setter вручную).
+- **@JvmField** = только поле (без getter/setter).
+- **@JvmStatic** = static method (в Java).
+- **@JvmOverloads** = перегрузки по default-параметрам.
+
+```kotlin
+class User {
+    @JvmField
+    var name: String = "Anonymous"
+    // Kotlin создаёт ТОЛЬКО поле (без getter/setter)
+    // Java видит: public String name (поле, не property)
+}
+```
+
+### 11. Kotlin default parameters vs Java overloads
+```kotlin
+// Kotlin:
+fun greet(name: String, greeting: String = "Hello", punctuation: String = "!") {
+    println("$greeting, $name$punctuation")
+}
+
+greet("Alice")                    // Hello, Alice!
+greet("Alice", "Hi")             // Hi, Alice!
+greet("Alice", "Hi", "?")        // Hi, Alice?
+```
+
+```java
+// Java (без @JvmOverloads):
+// Только 1 метод: greet(String name, String greeting, String punctuation)
+// Default-параметры НЕ видны в Java
+
+// Kotlin:
+fun greet(name: String, greeting: String = "Hello", punctuation: String = "!") {
+    println("$greeting, $name$punctuation")
+}
+
+// С @JvmOverloads:
+@JvmOverloads
+fun greet(name: String, greeting: String = "Hello", punctuation: String = "!") {
+    println("$greeting, $name$punctuation")
+}
+// Java видит 3 перегрузки:
+// greet(String name)
+// greet(String name, String greeting)
+// greet(String name, String greeting, String punctuation)
+```
+
+### 12. Kotlin scope functions: let, run, with, apply, also
+```kotlin
+// let — получает объект как `it`, возвращает результат
+val length = "Hello".let { it.length }  // 5
+
+// run — получает объект как `this`, возвращает результат
+val length = "Hello".run { length }  // 5
+
+// with — получает объект как `this`, возвращает результат
+val length = with("Hello") { length }  // 5
+
+// apply — получает объект как `this`, возвращает ОБЪЕКТ
+val list = mutableListOf<String>().apply {
+    add("a")
+    add("b")
+}  // list = ["a", "b"]
+
+// also — получает объект как `it`, возвращает ОБЪЕКТ
+val list = mutableListOf<String>().also {
+    it.add("a")
+    it.add("b")
+}  // list = ["a", "b"]
+```
+
+**Когда использовать:**
+- **let** — null-check + действие: `if (obj != null) obj.let { ... }`
+- **run** — блок с `this`
+- **with** — блок с `this` (для существующего объекта)
+- **apply** — инициализация объекта
+- **also** — побочное действие (logging)
+
+### 13. Kotlin extension functions vs Java static methods
+```kotlin
+// Kotlin extension function:
+fun String.truncateTo(maxLen: Int): String {
+    return if (length <= maxLen) this else take(maxLen) + "..."
+}
+
+// Use:
+val short = "Very long string...".truncateTo(20)  // "Very long string...."
+```
+
+```java
+// Java: static method
+public class StringUtils {
+    public static String truncateTo(String str, int maxLen) {
+        return str.length() <= maxLen ? str : str.substring(0, maxLen) + "...";
+    }
+}
+
+// Use:
+String short = StringUtils.truncateTo("Very long string...", 20);
+```
+
+**Различия:**
+- **Kotlin extension** = вызов на объекте (`str.truncateTo(20)`)
+- **Java static** = вызов на классе (`StringUtils.truncateTo(str, 20)`)
+- **Kotlin extension** не имеет доступа к private-полям (это просто синтаксический сахар)
+- **Kotlin extension** можно вызывать на объекте, Java static — только на классе
+
+### 14. Kotlin suspend functions и как они выглядят из Java
+```kotlin
+// Kotlin:
+suspend fun fetchUser(id: Long): User {
+    // suspend function — может suspending
+    return userRepository.findById(id)
+}
+
+// Call:
+val user = fetchUser(42L)  // только из suspend context
+```
+
+```java
+// Java: suspend function выглядит как метод с CoroutineScope
+// Нужно передать Continuation
+public User fetchUser(long id, Continuation<? super User> $completion) {
+    // ...
+}
+
+// Удобнее: использовать kotlinx.coroutines
+// или вызывать через runBlocking
+```
+
+**Правило:** suspend function из Java выглядит как метод с `Continuation`. Удобнее вызывать через `kotlinx.coroutines`.
+
+### 15. Kotlin type system: generics, variance, in/out
+```kotlin
+// Invariant (по умолчанию):
+fun <T> identity(value: T): T = value
+
+// Covariant (out):
+fun <out T : Any> printAll(items: List<T>) {
+    items.forEach { println(it) }
+}
+
+// Contravariant (in):
+fun <in T> addAll(list: MutableList<T>, items: List<T>) {
+    list.addAll(items)
+}
+
+// Star projection:
+fun printList(list: List<*>): String {
+    // list — List<out Any?>
+    return list.toString()
+}
+```
+
+**Variance:**
+- **out** (covariant) — только чтение (List<out T> = можно читать T, но не писать)
+- **in** (contravariant) — только запись (List<in T> = можно писать T, но не читать)
+- **star** — неизвестный тип (List<*> = List<out Any?>)
+
+### 16. Kotlin operator overloading
+```kotlin
+// Kotlin: оператор +
+class Vector(val x: Double, val y: Double) {
+    operator fun plus(other: Vector): Vector {
+        return Vector(x + other.x, y + other.y)
+    }
+    
+    override fun toString(): String = "($x, $y)"
+}
+
+val v1 = Vector(1.0, 2.0)
+val v2 = Vector(3.0, 4.0)
+val v3 = v1 + v2  // Vector(4.0, 6.0)
+```
+
+```java
+// Java: static method
+public class Vector {
+    private final double x, y;
+    
+    public Vector add(Vector other) {
+        return new Vector(x + other.x, y + other.y);
+    }
+}
+
+Vector v3 = v1.add(v2);
+```
+
+**Доступные операторы:** `+`, `-`, `*`, `/`, `%`, `plus`, `minus`, `times`, `div`, `mod`, `unaryPlus`, `unaryMinus`, `invoke`, `get`, `set`, `plusAssign`, `contains`
+
+### 17. Kotlin destructuring declarations
+```kotlin
+// Pair
+val (first, second) = Pair("Alice", 30)
+println(first)  // "Alice"
+println(second)  // 30
+
+// Triple
+val (name, age, city) = Triple("Alice", 30, "NYC")
+
+// Data class
+data class User(val name: String, val age: Int)
+val (name, age) = User("Alice", 30)
+
+// Map
+val (key, value) = Map.Entry("key", "value")
+```
+
+**Как работает:** destructuring использует `componentN()` methods (генерируются автоматически для data classes, Pair, Triple, Map.Entry).
+
+### 18. Kotlin inline functions и noinline
+```kotlin
+// Inline function:
+inline fun <T, R> Array<T>.mapInline(transform: (T) -> R): Array<R> {
+    val result = Array<R>(size) { transform(this[it]) }
+    return result
+}
+
+// Use:
+val arr = intArrayOf(1, 2, 3)
+val result = arr.mapInline { it * 2 }  // inlined (no lambda overhead)
+```
+
+**Нюансы:**
+- **inline** = тело функции копируется в место вызова (no lambda overhead)
+- **noinline** = lambda не инлайнится (для capture в замыкание)
+- **crossinline** = lambda инлайнится, но может быть вызвана из другого контекста
+
+```kotlin
+// crossinline:
+inline fun runCrossinline(block: crossinline () -> Unit) {
+    Thread {
+        block()  // OK: crossinline разрешает вызов из другого потока
+    }.start()
+}
+```
+
+### 19. Kotlin reified generics
+```kotlin
+// Reified generics (только для inline functions):
+inline fun <reified T : Any> List<*>.filterByType(): List<T> {
+    return filterIsInstance<T>()
+}
+
+val list = listOf(1, "hello", 3.0, true)
+val strings = list.filterByType<String>()  // ["hello"]
+```
+
+**Зачем:** в Java generics стёрты (type erasure). Reified generics позволяют использовать тип в runtime (только для inline functions).
+
+```kotlin
+// Без reified:
+fun <T> List<*>.filterByType(): List<T> {
+    // Т не известно в runtime (type erasure)
+    return filter { it is T }  // compile error
+}
+
+// С reified:
+inline fun <reified T : Any> List<*>.filterByType(): List<T> {
+    // T известно в runtime (reified)
+    return filter { it is T }  // OK
+}
+```
+
+### 20. Kotlin sealed classes vs Java sealed interfaces (Java 17)
+```kotlin
+// Kotlin:
+sealed class Result<out T> {
+    data class Success<T>(val value: T) : Result<T>()
+    data class Error(val message: String) : Result<Nothing>()
+    object Loading : Result<Nothing>()
+}
+
+// Use:
+when (result) {
+    is Result.Success -> println(result.value)
+    is Result.Error -> println(result.message)
+    is Result.Loading -> println("Loading...")
+}  // exhaustive (no default needed)
+```
+
+```java
+// Java 17:
+sealed interface Result<T> {
+    record Success<T>(T value) implements Result<T> {}
+    record Error(String message) implements Result<Nothing> {}
+    record Loading() implements Result<Nothing> {}
+}
+
+// Use:
+switch (result) {
+    case Result.Success<T> s -> System.out.println(s.value());
+    case Result.Error e -> System.out.println(e.message());
+    case Result.Loading l -> System.out.println("Loading...");
+}  // exhaustive (no default needed, Java 21)
+```
+
+**Различия:**
+- **Kotlin sealed class** = наследование (extends)
+- **Java sealed interface** = реализация (implements)
+- **Kotlin**: exhaustive when (без default)
+- **Java 17**: exhaustive switch (Java 21, без default)
+
+**Правило:** sealed (Kotlin и Java 17+) = ограниченное множество наследников. Exhaustive matching (без default).

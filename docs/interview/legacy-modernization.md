@@ -332,3 +332,265 @@ Monolith: [Orders] [Payments] [Users] [Inventory]
 - **Data consistency** (консистентность данных): eventual consistency (конечная консистентность).
 - **API design** (проектирование API): breaking changes (ломающие изменения — изменения контракта, которые требуют обновления клиентов).
 - **Team coordination** (координация команд): monolith team (команда монолита) + new service team (команда нового сервиса).
+
+### 8. Миграция с monolith на microservices: incremental vs big-bang
+**Incremental (рекомендуется):**
+1. **Identify** — найти границы доменов
+2. **Extract** — вынести один сервис
+3. **Test** — прогнать тесты
+4. **Deploy** — задеплоить сервис
+5. **Migrate** — переместить traffic
+
+**Big-bang (не рекомендуется):**
+1. **Rewrite** — переписать всё
+2. **Test** — прогнать тесты
+3. **Deploy** — задеплоить
+
+**Почему incremental:**
+- **Lower risk** — можно откатиться
+- **Continuous value** — каждый сервис = ценность
+- **Parallel work** — несколько команд
+
+### 9. Strangler Fig pattern: пошаговый процесс
+**Strangler Fig** = постепенное замещение монолита.
+
+```
+Stage 1:
+[Proxy] → [Monolith]
+
+Stage 2:
+[Proxy] → [Service A] + [Monolith]
+
+Stage 3:
+[Proxy] → [Service A] + [Service B] + [Monolith]
+
+Stage 4:
+[Proxy] → [Service A] + [Service B] + [Service C]
+```
+
+**Правила:**
+- **Proxy** — единая точка входа
+- **Service** — новый сервис (выделен из монолита)
+- **Monolith** — старый код (постепенно уменьшается)
+
+### 10. Branch by Abstraction: как абстрагировать legacy-код
+**Проблема:** legacy-код тесно связан с инфраструктурой.
+
+**Решение:**
+1. **Create abstraction** — создать интерфейс
+2. **Implement legacy** — реализовать через legacy
+3. **Implement new** — реализовать через new
+4. **Switch** — переключить на new
+
+```java
+// 1. Abstraction:
+public interface PaymentProcessor {
+    void processPayment(Order order);
+}
+
+// 2. Legacy implementation:
+public class LegacyPaymentProcessor implements PaymentProcessor {
+    public void processPayment(Order order) {
+        // Legacy code
+    }
+}
+
+// 3. New implementation:
+public class NewPaymentProcessor implements PaymentProcessor {
+    public void processPayment(Order order) {
+        // New code
+    }
+}
+
+// 4. Switch:
+@Configuration
+public class PaymentConfig {
+    @Bean
+    public PaymentProcessor paymentProcessor(@Value("${payment.type}") String type) {
+        return "new".equals(type) ? new NewPaymentProcessor() : new LegacyPaymentProcessor();
+    }
+}
+```
+
+### 11. Database-per-service: как мигрировать от shared DB
+**Проблема:** shared DB = все сервисы читают/пишут в одну БД.
+
+**Решение:**
+1. **Identify** — найти границы данных
+2. **Create** — создать новую БД для сервиса
+3. **Migrate** — переместить данные
+4. **Sync** — синхронизировать (если нужно)
+5. **Switch** — переключить сервис на новую БД
+
+**Инструменты:**
+- **CDC** (Change Data Capture) — Debezium, Maxwell
+- **Replication** — PostgreSQL logical replication
+- **Dual-write** — писать в обе БД (временное решение)
+
+### 12. Refactoring strategies: Boy Scout Rule, Strangler Fig, Branch by Abstraction
+**Boy Scout Rule:**
+- **Leave the code cleaner than you found it**
+- **Маленькие улучшения** при каждом изменении
+
+**Strangler Fig:**
+- **Постепенное замещение** монолита
+- **Proxy** + **services**
+
+**Branch by Abstraction:**
+- **Абстракция** + **legacy** + **new**
+- **Switch** на new
+
+**Когда использовать:**
+- **Boy Scout** — легкое refactoring
+- **Strangler** — замещение монолита
+- **Branch by Abstraction** — миграция на new infrastructure
+
+### 13. Anti-Corruption Layer (ACL): как изолировать legacy-логику
+**Проблема:** legacy-логика "загрязняет" new code.
+
+**Решение:**
+- **ACL** — слой между new code и legacy code
+- **Translate** — преобразовать legacy-данные в new-формат
+
+```java
+// ACL:
+public class LegacyPaymentAdapter {
+    private final LegacyPaymentService legacyService;
+    
+    public PaymentDto toNewFormat(LegacyPayment legacyPayment) {
+        return PaymentDto.builder()
+            .id(legacyPayment.getId())
+            .amount(legacyPayment.getAmount().multiply(BigDecimal.TEN))
+            .status(mapStatus(legacyPayment.getStatus()))
+            .build();
+    }
+    
+    private PaymentStatus mapStatus(LegacyStatus legacyStatus) {
+        switch (legacyStatus) {
+            case APPROVED: return PaymentStatus.APPROVED;
+            case REJECTED: return PaymentStatus.REJECTED;
+            default: throw new IllegalArgumentException("Unknown status: " + legacyStatus);
+        }
+    }
+}
+```
+
+### 14. Characterization tests: как покрыть legacy-код тестами
+**Проблема:** legacy-код не имеет тестов.
+
+**Решение:**
+1. **Record** — записать вход/выход legacy-функции
+2. **Assert** — проверить, что выход совпадает
+3. **Refactor** — refactoring с сохранением behavior
+
+```java
+// Characterization test:
+@Test
+public void testLegacyFunction() {
+    // Given:
+    Input input = new Input("data");
+    
+    // When:
+    Output output = legacyFunction(input);
+    
+    // Then:
+    assertThat(output.getValue()).isEqualTo("expected");
+    assertThat(output.getStatus()).isEqualTo("SUCCESS");
+}
+```
+
+**Инструменты:**
+- **Spring Boot Test** — integration tests
+- **Mockito** — mock dependencies
+- **Testcontainers** — real DB
+
+### 15. Domain extraction: как выделить домен из монолита
+**Проблема:** монолит = все домены в одном коде.
+
+**Решение:**
+1. **Identify** — найти границы доменов (DDD)
+2. **Extract** — вынести один домен
+3. **Test** — прогнать тесты
+4. **Deploy** — задеплоить домен
+
+**DDD (Domain-Driven Design):**
+- **Bounded Context** — граница домена
+- **Aggregate** — сущность домена
+- **Entity** — объект с идентификатором
+- **Value Object** — объект без идентификатора
+
+### 16. Migration testing: как проверить, что миграция не сломала систему
+**План:**
+1. **Unit tests** — проверка отдельных функций
+2. **Integration tests** — проверка интеграции
+3. **E2E tests** — проверка end-to-end
+4. **Load tests** — проверка нагрузки
+5. **Chaos tests** — проверка отказов
+
+**Инструменты:**
+- **JUnit 5** — unit tests
+- **Spring Boot Test** — integration tests
+- **Selenium** — E2E tests
+- **Gatling** — load tests
+- **Chaos Monkey** — chaos tests
+
+### 17. Rollback strategy: как откатиться, если миграция пошла не так
+**План:**
+1. **Backup** — сделать бэкап данных
+2. **Deploy** — задеплоить new version
+3. **Test** — прогнать smoke tests
+4. **Rollback** — откатиться на old version (если нужно)
+
+**Инструменты:**
+- **Kubernetes** — rollback deployment
+- **Database** — restore from backup
+- **Feature flags** — отключить new features
+
+### 18. Modernization metrics: как измерять прогресс модернизации
+**Метрики:**
+- **Code coverage** — покрытие тестами
+- **Technical debt** — количество технического долга
+- **Deployment frequency** — частота деплоев
+- **Mean time to recovery** — время до восстановления
+- **Change failure rate** — процент неудачных изменений
+
+**Dashboard:**
+```
+Code coverage: 85% (target: 90%)
+Technical debt: 50 items (target: < 20)
+Deployment frequency: 5/week (target: 10/week)
+Mean time to recovery: 2 hours (target: < 1 hour)
+Change failure rate: 10% (target: < 5%)
+```
+
+### 19. Legacy modernization roadmap: как спланировать модернизацию
+**Roadmap:**
+1. **Assess** — оценить текущее состояние
+2. **Plan** — спланировать модернизацию
+3. **Extract** — вынести домены
+4. **Modernize** — модернизировать
+5. **Test** — прогнать тесты
+6. **Deploy** — задеплоить
+
+**Временные рамки:**
+- **Assess** — 1-2 недели
+- **Plan** — 2-4 недели
+- **Extract** — 1-3 месяца
+- **Modernize** — 3-6 месяцев
+- **Test** — 1-2 недели
+- **Deploy** — 1 неделя
+
+### 20. Modernization risks: как управлять рисками модернизации
+**Риски:**
+- **Data loss** — потеря данных
+- **Downtime** — простой системы
+- **Compatibility** — несовместимость
+- **Performance** — деградация производительности
+- **Security** — уязвимости
+
+**Митигация:**
+- **Backup** — бэкап данных
+- **Staging** — тестирование на staging
+- **Feature flags** — постепенное включение
+- **Load tests** — проверка нагрузки
+- **Security review** — проверка безопасности

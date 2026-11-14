@@ -82,6 +82,33 @@ System.out.println(m2.getAmount()); // 150 (новый объект)
 
 Иммутабельные объекты являются потокобезопасными (thread-safe) по своей сути, потому что их состояние не может быть изменено после создания. В многопоточной среде, когда несколько потоков имеют доступ к одному и тому же иммутабельному объекту, они могут только **читать** его состояние. Поскольку нет операций записи, которые могли бы изменить состояние, не возникает ситуаций гонки данных (race conditions), и, следовательно, нет необходимости в синхронизации доступа к объекту. Каждый поток всегда будет видеть одно и то же, неизменное состояние объекта, что и обеспечивает потокобезопасность.
 
+```java
+// Иммутабельный объект без синхронизации — безопасно
+public final class Config {
+    private final String host;
+    private final int port;
+
+    public Config(String host, int port) {
+        this.host = host;  // final, один раз
+        this.port = port;
+    }
+    public String getHost() { return host; }
+    public int getPort() { return port; }
+}
+
+// 10 потоков читают один и тот же Config — без synchronized, volatile
+Config cfg = new Config("localhost", 8080);
+ExecutorService pool = Executors.newFixedThreadPool(10);
+for (int i = 0; i < 10; i++) {
+    pool.submit(() -> {
+        // Чтение — безопасно, объект не меняется
+        System.out.println(cfg.getHost() + ":" + cfg.getPort());
+    });
+}
+// Нет data race, нет visibility problem
+// (final field semantics из JMM гарантируют visibility)
+```
+
 
 ### 7. Что такое ключевое слово final и как оно помогает в создании иммутабельных классов
 
@@ -158,6 +185,29 @@ System.out.println(appt4.getTime().equals(date)); // false (изолирован
 
 Существует несколько способов защитить коллекцию от нежелательных изменений:
 1.  **Использовать неизменяемые (immutable) коллекции**: Начиная с Java 9, появились фабричные методы `List.of()`, `Set.of()`, `Map.of()`, которые создают действительно неизменяемые коллекции. Попытка изменить их приведет к `UnsupportedOperationException`.
+
+```java
+// Java 9+: immutable collections
+List<String> tags = List.of("java", "spring", "microservices");
+Set<Integer> ids = Set.of(1, 2, 3);
+Map<String, String> config = Map.of("host", "localhost", "port", "8080");
+
+// Попытка изменения → UnsupportedOperationException
+try {
+    tags.add("kafka"); // ❌ throw
+} catch (UnsupportedOperationException e) {
+    // ожидаемо
+}
+
+// Если нужно разрешить изменение — создайте копию:
+List<String> mutableTags = new ArrayList<>(tags);
+mutableTags.add("kafka"); // ✅ работает
+
+// Для пустых коллекций:
+List<String> empty = List.of();
+// Для одной пары: Map.of("key", "value")
+// Для >10 пар: Map.ofEntries(Map.entry("a","1"), Map.entry("b","2"), ...)
+```
 2.  **Использовать методы `copyOf()`**: Методы `List.copyOf()`, `Set.copyOf()`, `Map.copyOf()` создают неизменяемую копию существующей коллекции.
 3.  **Использовать `Collections.unmodifiableList()`**: Этот метод создает **неизменяемое представление (view)** над существующей коллекцией. Важно понимать, что он не создает копию. Если исходная коллекция будет изменена, эти изменения будут видны через неизменяемое представление. Поэтому этот метод не подходит для создания истинно иммутабельных объектов, если исходная коллекция может быть изменена.
 4.  **Возвращать защитную копию**: В геттере можно возвращать `new ArrayList<>(internalList)`, чтобы вызывающий код получил копию, изменения в которой не затронут внутреннюю коллекцию.

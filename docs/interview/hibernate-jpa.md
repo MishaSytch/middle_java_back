@@ -94,6 +94,18 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 
 Жизненный цикл сущности в Hibernate/JPA описывается четырьмя основными состояниями, через которые она проходит от создания до удаления: **transient**, **persistent** (managed), **detached** и **removed**. Переходы между состояниями управляются `EntityManager` (или `Session`) и связаны с `Persistence Context`.
 
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
+stateDiagram-v2
+    [*] --> Transient: new Entity()
+    Transient --> Persistent: persist() / merge()
+    Persistent --> Detached: close() / detach()
+    Persistent --> Removed: remove()
+    Removed --> [*]: flush() = DELETE
+    Detached --> Persistent: merge()
+    Persistent --> Persistent: flush() = INSERT/UPDATE
+```
+
 
 ### 8. Что такое состояния: transient, persistent, detached, removed
 
