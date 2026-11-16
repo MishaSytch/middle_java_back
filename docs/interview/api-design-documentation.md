@@ -13,7 +13,7 @@ OpenAPI Specification (OAS) — стандартизированный форм�
 
 В 3.1 появились: поддержка JSON Schema 2020-12 (anyOf, not, $ref с $defs), `webhooks` для event-driven, `content-type` в параметрах, несколько body через oneOf.
 
-Практическое применение: спецификация является source of truth для генерации клиентского кода, серверных stubs, документации (Swagger UI, Redoc, Stoplight), mock-серверов и contract tests.
+Практическое применение: спецификация является источником правды для генерации клиентского кода, серверных stubs, документации (Swagger UI, Redoc, Stoplight), mock-серверов и contract tests.
 
 ### 2. Генерация кода из OpenAPI: инструменты и стратегии
 **Серверные stubs (Java):**
@@ -26,11 +26,11 @@ OpenAPI Specification (OAS) — стандартизированный форм�
 - В Spring Cloud: `spring-cloud-openfeign` + генерация Feign clients.
 
 **Стратегии:**
-1. **Design-first**: спецификация пишется первой (через Swagger Editor, Stoplight, Redocly), из неё генерируются и серверные, и клиентские артефакты. Подходит для публичных API, BFF.
-2. **Code-first**: код пишется первым, спецификация генерируется из него (springdoc). Подходит для внутренних API.
+1. **Дизайн-сначала**: спецификация пишется первой (через Swagger Editor, Stoplight, Redocly), из неё генерируются и серверные, и клиентские артефакты. Подходит для публичных API, BFF.
+2. **Код-сначала**: код пишется первым, спецификация генерируется из него (springdoc). Подходит для внутренних API.
 3. **Гибрид**: спецификация вручную поддерживается как контракт, код проверяется через lint (spectral) и contract tests.
 
-**CI/CD интеграция:** `openapi-generator-cli` в pipeline, diff спецификаций между версиями (oasdiff, oas-diff) для детекции breaking changes.
+**CI/CD интеграция:** `openapi-generator-cli` в pipeline, diff спецификаций между версиями (oasdiff, oas-diff) для детекции ломающих изменений.
 
 ### 3. AsyncAPI: спецификация для event-driven API
 AsyncAPI — «OpenAPI для асинхронных систем». Описывает каналы (канал = topic/queue), сообщения (message format), протоколы (Kafka, AMQP, MQTT, WebSocket, SSE).
@@ -60,9 +60,9 @@ components:
           totalAmount: { type: number }
 ```
 
-Практическое применение: документация event contracts, генерация event consumers (Java, Node), mocking event-источников для разработки и тестирования, детекция breaking changes в event schemas.
+Практическое применение: документация контракты событий, генерация потребители событий (Java, Node), mocking event-источников для разработки и тестирования, детекция ломающие изменения в event schemas.
 
-### 4. gRPC + Protobuf: контракт, code generation, streaming
+### 4. gRPC + Protobuf: контракт, генерация кода, streaming
 **Protocol Buffers (proto):**
 ```protobuf
 syntax = "proto3";
@@ -95,34 +95,36 @@ message Order {
 4. Bidirectional streaming (stream ↔ stream)
 
 **gRPC vs REST:**
-- gRPC: HTTP/2, binary serialization (protobuf), strong typing, codegen, multiplexing
-- REST: HTTP/1.1 (или 2), JSON, human-readable, tooling, browser-native
+- gRPC: HTTP/2, бинарная сериализация (protobuf), сильная типизация, генерация кода, мультиплексирование
+- REST: HTTP/1.1 (или 2), JSON, читаемый человеком, tooling, нативный для браузера
 
 **Ограничения gRPC:**
 - Нет CORS из коробки (нужен gRPC-Web proxy)
 - Браузеры не поддерживают напрямую
-- Debugging сложнее (не human-readable)
+- Debugging сложнее (не читаемый человеком)
 - Нет нативного HATEOAS
 - Versioning: package name или gRPC metadata
 
-**Практика:** gRPC для internal service-to-service, REST для external/public API. Gateway (Envoy, Istio) конвертирует REST → gRPC.
+**Практика:** gRPC для внутренние межсервисные вызовы, REST для внешний API. Gateway (Envoy, Istio) конвертирует REST → gRPC.
+
+> 🔗 Сравнение производительности и сценарии использования gRPC vs REST — см. `rest-http.md` § "gRPC vs REST".
 
 ### 5. GraphQL vs REST vs gRPC: trade-offs
 **REST:**
-- Преимущества: простой, кэшируемый (HTTP GET), широко поддерживаемый, human-readable, tooling
-- Недостатки: over/under-fetching, N+1 при составных данных, versioning через URI
-- Когда: публичные API, CRUD-heavy, когда клиенты разнообразны
+- Преимущества: простой, кэшируемый (HTTP GET), широко поддерживаемый, читаемый человеком, tooling
+- Недостатки: избыточное/недостаточное извлечение данных, N+1 при составных данных, versioning через URI
+- Когда: публичные API, с преобладанием CRUD, когда клиенты разнообразны
 
 **GraphQL:**
-- Преимущества: точный запрос (нет over/under-fetching), single endpoint, schema-first, introspection
-- Недостатки: кэширование сложнее (POST), N+1 резолвинг (нужен DataLoader), сложность безопасности (query depth/complexity limits), нет нативного пагинации
-- Когда: BFF (Backend For Frontend), клиенты с разными потребностями в данных (mobile, web, IoT)
+- Преимущества: точный запрос (нет избыточное/недостаточное извлечение данных), один эндпоинт, схема-сначала, интроспекция
+- Недостатки: кэширование сложнее (POST), N+1 резолвинг (нужен DataLoader), сложность безопасности (ограничение глубины/сложности запросов), нет нативного пагинации
+- Когда: BFF (бэкенд для фронтенда), клиенты с разными потребностями в данных (mobile, web, IoT)
 - Стек: Spring for GraphQL (`spring-graphql`), DGS Framework (Netflix)
 
 **gRPC:**
-- Преимущества: производительность (binary, HTTP/2), strong typing, streaming, codegen
-- Недостатки: нет browser support, сложность debugging, limited tooling
-- Когда: internal microservice communication, high-throughput, streaming
+- Преимущества: производительность (binary, HTTP/2), сильная типизация, streaming, генерация кода
+- Недостатки: нет поддержка в браузере, сложность debugging, ограниченные инструменты
+- Когда: внутреннее общение микросервисов, с высокой пропускной способностью, streaming
 
 **Критерии выбора:**
 | Критерий | REST | GraphQL | gRPC |
@@ -133,6 +135,28 @@ message Order {
 | Streaming | SSE/WebSocket | Subscriptions | Native |
 | Versioning | URI/Header | Schema | Package |
 | Tooling | Отличное | Хорошее | Среднее |
+
+**Реализация в Spring (Spring for GraphQL):**
+Главная проблема GraphQL — N+1 при резолвинге вложенных сущностей. В Java это решается через **DataLoader** (отложенная загрузка и батчинг).
+
+```java
+@Controller
+public class OrderController {
+    
+    // Резолвер для Order
+    @SchemaMapping(typeName = "Query", field = "order")
+    public Order getOrder(String id) {
+        return orderService.findById(id);
+    }
+
+    // Резолвер для вложенных Items (использует DataLoader для батчинга)
+    @SchemaMapping(typeName = "Order", field = "items")
+    public CompletableFuture<List<Item>> getItems(Order order, DataLoader<String, List<Item>> dataLoader) {
+        return dataLoader.load(order.getId()); // Запрос уйдет батчем, а не N раз!
+    }
+}
+```
+**Компромиссы:** GraphQL даёт гибкость клиенту, но перекладывает сложность на сервер (валидация глубины запросов, защита от DoS через сложность, настройка DataLoader).
 
 ### 6. HATEOAS: принципы и реализация в Spring
 **HATEOAS** (Hypermedia as the Engine of Application State) — репрезентация ресурса содержит ссылки на связанные ресурсы и допустимые переходы. Клиент не хардкодит URL, а следует ссылкам в ответах.
@@ -171,34 +195,34 @@ public ResponseEntity<RepresentationModel<?>> getOrder(@PathVariable Long id) {
 
 **Реальность 2026:** HATEOAS редко применяется в production. Причины: сложность, низкая привязка (link generation на каждый запрос), большинство клиентов знают URL. Применяется в публичных API с высокой степенью автономности (Twitter API v1.1 использовал частично). В Spring: `spring-hateoas` + `hal`. Для BFF и внутренних API — обычный REST.
 
-### 7. API Gateway patterns: routing, rate limiting, transformation
+### 7. Шлюз API: маршрутизация, ограничение частоты, трансформация
 **API Gateway** — единая точка входа для всех API запросов. Паттерны:
 
 **Routing:**
-- Path-based: `/orders/*` → order-service, `/users/*` → user-service
-- Header-based: `X-Service: billing` → billing-service
-- Method-based: `POST /search` → search-service
-- Weighted routing (canary): 90% → v1, 10% → v2
+- По пути: `/orders/*` → order-service, `/users/*` → user-service
+- По заголовку: `X-Service: billing` → billing-service
+- По методу: `POST /search` → search-service
+- Взвешенная маршрутизация (канареечный): 90% → v1, 10% → v2
 
 **Rate Limiting:**
-- Per consumer (API key / tenant)
-- Per endpoint
-- Algorithms: token bucket, sliding window, fixed window
+- На потребителя (API key / аренд)
+- На эндпоинт
+- Algorithms: корзина с токенами, скользящее окно, фиксированное окно
 - Response: `429 Too Many Requests` + `Retry-After` header
 
 **Transformation:**
 - JSON → gRPC (Envoy, Istio)
 - Versioning: strip `/v1/` из path перед forward
-- Enrichment: добавлять headers (auth token, tenant id)
-- Aggregation: compose multiple backend calls в один ответ (BFF pattern)
+- Обогащение: добавлять заголовки (токен авторизации, ID аренда)
+- Агрегация: объединять несколько вызовов бэкенда в один ответ (паттерн BFF)
 
 **Дополнительные функции gateway:**
-- Authentication/Authorization (JWT verification, OAuth2)
-- Caching (response caching для GET)
-- Request/response logging
-- Circuit breaking (не forwarding в перегруженный сервис)
-- SSL termination
-- IP allowlisting
+- Аутентификация/авторизация (проверка JWT, OAuth2)
+- Кэширование (кэширование ответов для GET)
+- Логирование запросов/ответов
+- Предохранитель (не переадресовать в перегруженный сервис)
+- Завершение SSL
+- Белый список IP
 
 **Технологии:** Kong, APISIX, Envoy, AWS API Gateway, Azure API Management, Istio (Service Mesh как gateway), Spring Cloud Gateway (lightweight, в JVM).
 
@@ -215,13 +239,13 @@ public RouteLocator customRoutes(RouteLocatorBuilder builder) {
 ```
 
 ### 8. Contract Testing: Pact, Spring Cloud Contract
-**Проблема:** в микросервисах producer и consumer — разные команды/деплои. Как гарантировать, что producer не сломает consumer?
+**Проблема:** в микросервисах продюсер и потребитель — разные команды/деплои. Как гарантировать, что producer не сломает consumer?
 
 **Pact (consumer-driven contract testing):**
 1. Consumer пишет тест: «я ожидаю, что GET /orders/123 вернёт JSON с полями orderId, total»
-2. Pact записывает consumer contract (JSON-файл)
+2. Pact записывает контракт потребителя (JSON-файл)
 3. Contract публикуется в Pact Broker
-4. CI producer: запускает provider verification — проверяет, что реальные ответы удовлетворяют все consumer contracts
+4. CI producer: запускает provider verification — проверяет, что реальные ответы удовлетворяют все контракт потребителяs
 5. Если нет → CI producer падает
 
 ```java
@@ -243,7 +267,7 @@ class BillingPactTest {
 }
 ```
 
-**Spring Cloud Contract (Verifiere):**
+**Spring Cloud Contract (Верификация):**
 - Producer определяет contract (GROOVY DSL или YAML)
 - Генерируется: stub для consumer, test для provider
 - Интеграция с Spring Cloud Contract Stub Runner (consumer поднимает stubs provider'ов)
@@ -251,33 +275,56 @@ class BillingPactTest {
 **Сравнение:**
 | | Pact | Spring Cloud Contract |
 |---|---|---|
-| Direction | Consumer-driven | Provider-driven |
+| Direction | Со стороны потребителя | Со стороны провайдера |
 | DSL | Java/Kotlin/JS | Groovy/YAML |
 | Broker | Pact Broker (отдельный) | Нет встроенного |
 | Ecosystem | Многоплатформенный | Spring-only |
 
+**Визуализация Consumer-Driven Contract Testing (Pact):**
+
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
+sequenceDiagram
+    participant C as Consumer Team
+    participant P as Producer Team
+    participant B as Pact Broker
+
+    C->>C: 1. Writes test expecting Producer response
+    C->>B: 2. Publishes Consumer Contract (JSON)
+    Note over P: 3. Producer changes code / API
+    P->>B: 4. Fetches latest Consumer Contracts
+    P->>P: 5. Runs Provider Verification Tests
+    alt Contract violated
+        P-->>P: CI/CD fails (Breaking Change!)
+    else Contract verified
+        P->>B: 6. Publishes verification result (Verified)
+    end
+```
+
+> 🔗 Подробнее про тестирование микросервисов — см. `testing.md` § "Тестирование микросервисов".
+
 ### 9. API versioning: стратегии и trade-offs
-**URI versioning:** `/api/v1/orders`, `/api/v2/orders`
+**Версионирование в URI:** `/api/v1/orders`, `/api/v2/orders`
 - Плюсы: видимое, легко кэшировать, простой routing
 - Минусы: «version in URL» против REST purism, много URL, HATEOAS-несовместимо
 
-**Header versioning:** `Accept: application/vnd.company.api.v1+json`
+**Версионирование в заголовке:** `Accept: application/vnd.company.api.v1+json`
 - Плюсы: чистый URI, один endpoint
 - Минусы: скрытое, сложно debug, кэширование сложнее
 
-**Query parameter:** `?version=1`
+**Параметр запроса:** `?version=1`
 - Минусы: самый слабый вариант, не кэшируется отдельно
 
-**Content negotiation (RFC-комплаентный):**
+**Переговоры о формате (совместимый с RFC):**
 - `Accept: application/vnd.company.orders.v2+json`
 - Корректный HTTP-способ, но complex
 
-**Consumer-driven versioning (рекомендуемый подход 2026):**
+**Со стороны потребителя versioning (рекомендуемый подход 2026):**
 - Не versioning через URI, а:
-  - Additive changes (новые поля) — не breaking
+  - Аддитивные изменения (новые поля) — не ломающие
   - Deprecation: `@Deprecated` header в ответах, sunset header (RFC 3298)
-  - Breaking changes → новая major версия
-- Практика: большинство pубличных API (Stripe, Twitter) — additive first, breaking только v2+
+  - Ломающие изменения → новая major-версия
+- Практика: большинство публичных API (Stripe, Twitter) — аддитивные сначала, ломающие только с v2+
 
 **Sunset (RFC 3298):**
 ```
@@ -290,71 +337,71 @@ Deprecation: /api/deprecation-policy
 - Internal: без versioning (сервисы деплоятся вместе)
 - External: URI v1/v2, additive changes, sunset для deprecated
 
-### 10. API evolution: backwards compatibility, deprecation
-**Правила backwards compatibility:**
+### 10. API evolution: обратная совместимость, deprecation
+**Правила обратная совместимость:**
 - Добавление полей в response — OK (consumer игнорирует неизвестные)
-- Добавление optional параметров — OK
-- Удаление/переименование полей — BREAKING
-- Изменение типа поля — BREAKING
-- Изменение status codes — BREAKING
-- Добавление required параметра — BREAKING
+- Добавление необязательных параметров — OK
+- Удаление/переименование полей — ЛОМАЮЩЕЕ
+- Изменение типа поля — ЛОМАЮЩЕЕ
+- Изменение кодов состояния — ЛОМАЮЩЕЕ
+- Добавление обязательного параметра — ЛОМАЮЩЕЕ
 
 **Процесс deprecation:**
 1. **Announce**: `Deprecation` header, документация
 2. **Dual-run**: старая и новая версия работают параллельно
 3. **Warn**: логирование, alerting на использование deprecated
 4. **Sunset**: RFC 3298 `Sunset` header с датой
-5. **Remove**: удаление deprecated endpoint
+5. **Remove**: удаление устаревший эндпоинт
 
 **Практические инструменты:**
-- `oasdiff` — diff OpenAPI спецификаций, детекция breaking changes
+- `oasdiff` — diff OpenAPI спецификаций, детекция ломающие изменения
 - `spectral` — lint API specs, custom rules
-- Pact Broker — проверка compatibility при каждом деплое
-- API analytics — мониторинг использования deprecated endpoints
+- Pact Broker — проверка совместимости при каждом деплое
+- API analytics — мониторинг использования устаревший эндпоинтs
 
-**Стратегия для mикросервисов:**
-- Contract-first: изменения в спецификации проходят review
-- CI: oasdiff между spec в main и PR — блокирует breaking changes
-- Deprecation window: минимум 6-12 месяцев для публичных API
+**Стратегия для микросервисов:**
+- Контракт-сначала: изменения в спецификации проходят ревью
+- CI: oasdiff между spec в main и PR — блокирует ломающие изменения
+- Окно депрекации: минимум 6-12 месяцев для публичных API
 
-### 11. REST best practices: URL design, HTTP methods, status codes
-**URL design:**
-- Resource-oriented: `/orders`, `/orders/{id}`, `/orders/{id}/items`
-- Plural nouns: `/orders` (не `/order`)
-- No verbs in URL: `POST /orders` (не `POST /createOrder`)
+### 11. REST best practices: Проектирование URL, HTTP methods, status codes
+**Проектирование URL:**
+- Ресурсно-ориентированное: `/orders`, `/orders/{id}`, `/orders/{id}/items`
+- Множественное число: `/orders` (не `/order`)
+- Без глаголов в URL: `POST /orders` (не `POST /createOrder`)
 - Nesting: максимум 2 уровня (`/orders/{id}/items`), глубже — flat (`/items?orderId=123`)
 - Pagination: `/orders?page=2&size=20` или cursor-based `?cursor=xxx&limit=20`
 - Filtering: `?status=PAID&minAmount=100`
 - Sorting: `?sort=-createdAt` (minus = desc)
 
 **HTTP methods:**
-- `GET` — idempotent, safe, cacheable
+- `GET` — идемпотентный, безопасный, кэшируемый
 - `POST` — creation (не idempotent), или non-CRUD operations
-- `PUT` — idempotent, full replacement
-- `PATCH` — partial update (JSON Patch RFC 6902, JSON Merge Patch RFC 7386)
+- `PUT` — idempotent, полная замена
+- `PATCH` — частичное обновление (JSON Patch RFC 6902, JSON Merge Patch RFC 7386)
 - `DELETE` — idempotent
-- `HEAD` — same as GET, no body
-- `OPTIONS` — CORS, supported methods
+- `HEAD` — same as GET, без тела
+- `OPTIONS` — CORS, поддерживаемые методы
 
 **Status codes:**
 - `200 OK` — success
 - `201 Created` — resource created + `Location` header
-- `202 Accepted` — async operation
-- `204 No Content` — DELETE success, PATCH without body
-- `400 Bad Request` — malformed request
-- `401 Unauthorized` — not authenticated
-- `403 Forbidden` — authenticated but no permission
+- `202 Accepted` — асинхронная операция
+- `204 No Content` — успешный DELETE, PATCH без тела
+- `400 Bad Request` — некорректный запрос
+- `401 Unauthorized` — не авторизован
+- `403 Forbidden` — авторизован, но нет прав
 - `404 Not Found`
-- `409 Conflict` — resource conflict (duplicate)
-- `422 Unprocessable Entity` — semantic error (valid format, wrong meaning)
+- `409 Conflict` — конфликт ресурсов (дубликат)
+- `422 Unprocessable Entity` — семантическая ошибка (корректный формат, неверное значение)
 - `429 Too Many Requests` — rate limit + `Retry-After`
-- `500 Internal Server Error`
+- `500 Внутренняя ошибка сервера`
 - `503 Service Unavailable` — maintenance, overload + `Retry-After`
 
 **Headers:**
-- `ETag` / `If-None-Match` — conditional GET, caching
-- `Idempotency-Key` — idempotent POST
-- `X-Request-Id` — correlation
+- `ETag` / `If-None-Match` — условный GET, кэширование
+- `Idempotency-Key` — идемпотентный POST
+- `X-Request-Id` — корреляция
 - `Retry-After` — rate limiting, 503
 - `Sunset` — deprecation
 
@@ -362,16 +409,16 @@ Deprecation: /api/deprecation-policy
 **Инструменты:**
 - **Swagger UI** — интерактивная документация из OpenAPI (try-it-out)
 - **Redoc** — красивая статическая документация (3-column layout)
-- **Stoplight Studio** — design-first, collaboration, lint, mocks
-- **Scalar** — modern alternative to Swagger UI
-- **GitBook / Confluence** — narrative documentation (tutorials, guides)
+- **Stoplight Studio** — дизайн-сначала, совместная работа, проверка, mock-серверы
+- **Scalar** — современная альтернатива Swagger UI
+- **GitBook / Confluence** — нарративная документация (туториалы, руководства)
 
 **Стратегии:**
 1. **OpenAPI-first**: спецификация в репозитории, doc генерируется автоматически
    - CI: build → generate docs → publish (GitHub Pages, S3, internal portal)
-2. **Code-first**: springdoc генерирует spec из кода, doc из spec
+2. **Код-сначала**: springdoc генерирует spec из кода, doc из spec
    - Минус: нет контроля качества спецификации
-3. **Hybrid**: спецификация вручную (source of truth), код lint against spec
+3. **Hybrid**: спецификация вручную (источник правды), код проверяется lint против спецификации
 
 **Контент документации:**
 - Getting started (auth, first request)
@@ -392,7 +439,7 @@ Deprecation: /api/deprecation-policy
 ### 13. gRPC metadata, interceptors и error handling
 **gRPC Metadata (аналог HTTP headers):**
 ```java
-// Client: setting metadata
+// Клиент: настройка метаданных
 ManagedChannel channel = ...;
 Metadata metadata = new Metadata();
 metadata.put(Metadata.Key.of("X-Request-Id", Metadata.ASCII_STRING_MARSHALLER), "req-123");
@@ -406,8 +453,8 @@ OrderGrpc.OrderBlockingStub stub = OrderGrpc.newBlockingStub(channel)
 ```
 
 **Interceptors (аналог Spring interceptors / AOP):**
-- Client interceptor: auth, logging, retry
-- Server interceptor: auth validation, tenant resolution, metrics
+- Клиентский интерцептор: аутентификация, логирование, повтор
+- Серверный интерцептор: проверка аутентификации, определение аренда, метрики
 
 ```java
 ServerInterceptors.intercept(serverBuilder,
@@ -417,7 +464,7 @@ ServerInterceptors.intercept(serverBuilder,
         public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
                 ServerCall<ReqT, RespT> call, Metadata headers,
                 ServerCallHandler<ReqT, RespT> next) {
-            // Extract auth token, validate, resolve tenant
+            // Извлечь токен авторизации, проверить, определить аренд
             ServerCall<ReqT, RespT> newCall = new MeteredServerCall<>(call);
             return next.callHandler(newCall, headers);
         }
@@ -425,7 +472,7 @@ ServerInterceptors.intercept(serverBuilder,
 ).build();
 ```
 
-**Error handling (gRPC status codes):**
+**Обработка ошибок (коды состояния gRPC):**
 - `Status.OK` — success
 - `Status.CANCELLED` — client cancelled
 - `Status.NOT_FOUND` — resource not found
@@ -437,7 +484,7 @@ ServerInterceptors.intercept(serverBuilder,
 - `Status.INTERNAL` — 500
 - `Status.UNAVAILABLE` — 503
 
-**Error details (gRPC extension):**
+**Детали ошибок (расширение gRPC):**
 ```java
 ErrorInfo errorInfo = ErrorInfo.newBuilder()
     .setReason("ORDER_NOT_FOUND")
@@ -449,7 +496,7 @@ Status status = Status.NOT_FOUND.withDescription("Order not found")
 ```
 
 ### 14. REST error handling: problem details (RFC 9457)
-**RFC 9457 (Problem Details for HTTP APIs)** — standard error format:
+**RFC 9457 (Problem Details for HTTP APIs)** — стандартный формат ошибок:
 
 ```json
 {
@@ -469,7 +516,7 @@ Status status = Status.NOT_FOUND.withDescription("Order not found")
 
 **Spring Boot 3 (RFC 9457 native):**
 ```java
-// Default Spring Boot 3 behavior: ProblemDetail
+// Поведение Spring Boot 3 по умолчанию: ProblemDetail
 @GetMapping("/orders/{id}")
 public ResponseEntity<?> getOrder(@PathVariable String id) {
     return orderService.findById(id)
@@ -485,7 +532,7 @@ public ResponseEntity<?> getOrder(@PathVariable String id) {
 }
 ```
 
-**Custom error handler:**
+**Пользовательский обработчик ошибок:**
 ```java
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -499,17 +546,19 @@ public class GlobalExceptionHandler {
 }
 ```
 
-**Добавляемые поля:** `errorCode` (machine-readable), `errors[]` (field-level validation), `requestId` (correlation).
+**Добавляемые поля:** `errorCode` (читаемая машиной), `errors[]` (полевая валидация), `requestId` (корреляция).
+
+> 🔗 Про глобальную обработку исключений через `@ControllerAdvice` и `ProblemDetail` в Spring Boot 3 — см. `spring-boot.md` § "@ControllerAdvice и ProblemDetail".
 
 ### 15. API security: authentication, authorization, threat model
-**Authentication patterns:**
+**Паттерны аутентификации:**
 1. **API Key** — header `X-API-Key: xxx`, simple, для service-to-service
 2. **OAuth2 Client Credentials** — service-to-service, `client_id` + `client_secret` → `access_token`
 3. **OAuth2 Authorization Code + PKCE** — user-facing (SPA, mobile)
-4. **JWT Bearer** — stateless auth, token в `Authorization: Bearer <jwt>`
+4. **JWT Bearer** — безсостоянная аутентификация, token в `Authorization: Bearer <jwt>`
 5. **mTLS** — mutual TLS для service-to-service (Istio, Linkerd)
 
-**Authorization patterns:**
+**Паттерны авторизации:**
 - **RBAC** (Role-Based Access Control) — роли: admin, operator, viewer
 - **ABAC** (Attribute-Based) — правила: `tenant == request.tenant && role in [admin, operator]`
 - **OWASP API Security Top 10 2023:**
@@ -524,7 +573,7 @@ public class GlobalExceptionHandler {
   - API9: Unsafe Consumption of APIs
   - API10: Information Exposure
 
-**Threat model для API:**
+**Модель угроз для API:**
 - **Injection**: SQL, NoSQL, LDAP, command injection через параметры
 - **BOLA**: user A получает resource user B через перебор ID
   - Защита: ownership check, scope token
@@ -535,129 +584,255 @@ public class GlobalExceptionHandler {
 
 **Практические меры:**
 - JWT: short TTL (15min), refresh tokens, `aud` claim validation
-- Input validation: allowlist, size limits, schema validation
+- Валидация ввода: белый список, ограничения размера, проверка схемы
 - CORS: strict `Access-Control-Allow-Origin`
 - HSTS, CSP, X-Content-Type-Options: nosniff
-- API gateway: rate limiting, auth, IP allowlist
+- Шлюз API: ограничение частоты, аутентификация, белый список IP
 - Secrets: не в headers client-side, не в logs
 
-### 16. API design review: как провести ревью API-дизайна
-**Checklist:**
-1. **Naming** — консистентные имена (camelCase, snake_case)
-2. **URL structure** — RESTful (resource-oriented)
-3. **HTTP methods** — правильные методы (GET, POST, PUT, PATCH, DELETE)
-4. **Status codes** — правильные коды (200, 201, 400, 404, 500)
-5. **Error handling** — структурированные ошибки
-6. **Pagination** — для списков
-7. **Versioning** — стратегия версионирования
-8. **Security** — auth, rate limiting
-9. **Documentation** — OpenAPI/AsyncAPI
-10. **Testing** — contract tests, E2E tests
+> 🔗 Подробно про OAuth2, JWT и Resource Server в Spring — см. `spring-security.md` § "OAuth2/OIDC и Resource Server".
 
-**Process:**
-1. **Design** — дизайнер API
-2. **Review** — ревью (team)
-3. **Iterate** — доработка
-4. **Approve** — одобрение
-5. **Implement** — реализация
+### 16. API design review: как провести ревью API-дизайна
+
+API design review — формальная процедура оценки API-спецификации до реализации. Без ревью API накапливает несогласованные решения (разные имена полей, разные статус-коды для одной ошибки, отсутствие пагинации) — и через полгода становится «кашей».
+
+**Checklist (10 пунктов):**
+1. **Naming** — консистентные имена (camelCase для JSON, snake_case для query params; ресурсы во множественном числе: `/orders`, не `/order`).
+2. **URL structure** — RESTful (resource-oriented): `GET /orders/{id}`, не `GET /getOrder?id=1`.
+3. **HTTP methods** — правильные методы: GET (read), POST (create), PUT (full update), PATCH (частичное обновление), DELETE (remove).
+4. **Status codes** — правильные коды: 200 (OK), 201 (Created), 204 (No Content), 400 (Bad Request), 401 (Unauthorized), 403 (Forbidden), 404 (Not Found), 409 (Conflict), 422 (Validation Error), 429 (Rate Limited), 500 (Внутренняя ошибка сервера).
+5. **Error handling** — структурированные ошибки (RFC 9457 Problem Detail, см. Q14), не «500: something went wrong».
+6. **Pagination** — для списков: `?page=1&size=20&sort=createdAt,desc` или cursor-based `?cursor=xxx&limit=20`.
+7. **Versioning** — стратегия версионирования (URI v1/v2, см. Q9).
+8. **Security** — auth (OAuth2, JWT), rate limiting, authorization (RBAC/ABAC).
+9. **Documentation** — OpenAPI 3.1 (REST) или AsyncAPI (event-driven), генерация из кода или вручную.
+10. **Testing** — contract tests (Pact, см. Q8), E2E tests для критичных сценариев.
+
+**Процесс (5 шагов):**
+1. **Design** — разработчик/архитектор пишет API-спецификацию (OpenAPI YAML).
+2. **Review** — команда (2–3 ревьюера) оценивает по checklist. Ревью длится 30–60 мин.
+3. **Iterate** — автор вносит правки по замечаниям.
+4. **Approve** — архитектурный комитет / tech lead одобряет.
+5. **Implement** — реализация + генерация кода из спецификации.
+
+**Компромиссы:**
+- Строгий ревью (5+ ревьюеров) — высокое качество, но медленно (1–2 недели до approval).
+- Лёгкий ревью (1–2 ревьюера) — быстро (1–2 дня), но риск пропустить несогласованность.
+- **Без ревью** — API становится «кашей» через 3–6 месяцев, миграция дороже.
+
+**Вопросы интервьюера:**
+- «Что делать, если ревьюеры не согласны?» — архитектурный комитет решает; если нет — tech lead принимает решение.
+- «Как часто ревью?» — перед каждым major release (v1, v2), при добавлении нового ресурса.
 
 ### 17. API style guide: как написать стиль-гайд для API
-**Структура:**
+
+Style guide — документ, который фиксирует правила проектирования API для всей команды. Без style guide каждый разработчик пишет API «по-своему» — и через полгода в системе 5 разных способов пагинации, 3 формата ошибок и 2 стиля именования.
+
+**Структура style guide:**
+
 ```markdown
 # API Style Guide
 
 ## 1. Naming
-- Resource: `orders` (plural, lowercase)
-- Field: `orderId` (camelCase)
+- Resource: `orders` (plural, lowercase, kebab-case для URL: `/order-items`)
+- Field: `orderId` (camelCase для JSON), `order_id` (snake_case для query params)
 - Enum: `PENDING`, `APPROVED` (UPPER_CASE)
 
 ## 2. URL Structure
 - List: `GET /orders`
 - Item: `GET /orders/{id}`
 - Create: `POST /orders`
-- Update: `PUT /orders/{id}`
+- Update (full): `PUT /orders/{id}`
+- Update (partial): `PATCH /orders/{id}`
 - Delete: `DELETE /orders/{id}`
+- Sub-resource: `GET /orders/{id}/items`
 
 ## 3. HTTP Methods
-- GET: read
-- POST: create
-- PUT: update (full)
-- PATCH: update (partial)
-- DELETE: delete
+- GET: read (idempotent, safe)
+- POST: create (not idempotent)
+- PUT: full update (idempotent)
+- PATCH: частичное обновление (not idempotent)
+- DELETE: delete (idempotent)
 
 ## 4. Status Codes
-- 200: OK
-- 201: Created
-- 400: Bad Request
-- 401: Unauthorized
-- 403: Forbidden
-- 404: Not Found
-- 500: Internal Server Error
+- 200: OK (GET, PUT, PATCH, DELETE)
+- 201: Created (POST, с Location header)
+- 204: No Content (DELETE, без body)
+- 400: Bad Request (ошибка валидации)
+- 401: Unauthorized (нет auth)
+- 403: Forbidden (нет прав)
+- 404: Not Found (ресурс не существует)
+- 409: Conflict (дубликат, версия не совпадает)
+- 422: Unprocessable Entity (валидация по бизнес-правилам)
+- 429: Too Many Requests (rate limit, с Retry-After)
+- 500: Внутренняя ошибка сервера
 
 ## 5. Error Handling
-- Structured error: `{ "error": { "code": "NOT_FOUND", "message": "..." } }`
+- Формат: RFC 9457 Problem Detail (application/problem+json)
+- `{ "type": "...", "title": "...", "status": 404, "detail": "...", "errorCode": "NOT_FOUND" }`
+- Каждый error имеет читаемая машиной `errorCode`
 
 ## 6. Pagination
-- `?page=1&size=20&sort=createdAt,desc`
+- Offset-based: `?page=1&size=20&sort=createdAt,desc`
+- Cursor-based: `?cursor=xxx&limit=20` (для больших списков)
+- Response: `{ "data": [...], "page": 1, "size": 20, "total": 100, "next": "...", "prev": "..." }`
 
 ## 7. Versioning
-- `GET /v1/orders` (URI-based)
+- URI-based: `GET /v1/orders`
+- Additive changes — без изменения версии
+- Breaking changes — новая major версия (v2)
+- Deprecated версии — Sunset header (RFC 3298)
+
+## 8. Security
+- Auth: OAuth2 Authorization Code + PKCE (user), Client Credentials (service)
+- Token: JWT Bearer, TTL = 15 мин
+- Rate limiting: per-user (100 req/min), per-IP (1000 req/min)
+- CORS: strict allowlist
+
+## 9. Documentation
+- OpenAPI 3.1 (REST), AsyncAPI (event-driven)
+- Генерация из кода: springdoc-openapi
+- Публикация: Swagger UI, Redoc
+- Примеры запросов/ответов в каждой операции
 ```
+
+**Компромиссы:**
+- Детальный style guide (100+ страниц) — полный контроль, но долго поддерживать (обновлять при каждом изменении).
+- Лёгкий style guide (5–10 страниц) — быстро, но меньше контроля.
+- **Без style guide** — API становится «кашей» через 3–6 месяцев.
+
+**Вопросы интервьюера:**
+- «Кто обновляет style guide?» — API architect / tech lead, при каждом major release.
+- «Что делать, если style guide конфликтует с бизнес-требованием?» — exception с документацией (почему отклонение, на какой период).
 
 ### 18. API governance: как управлять API в организации
-**Компоненты:**
-1. **API catalog** — список всех API
-2. **API owner** — владелец API
-3. **API lifecycle** — lifecycle (create, deploy, deprecate, retire)
-4. **API standards** — стандарты (style guide)
-5. **API testing** — тестирование (contract, E2E)
-6. **API monitoring** — мониторинг (metrics, logs)
+
+API governance — система управления API на уровне организации: кто владелец, какой lifecycle, какие стандарты, как мониторить. Без governance API «размножаются» — каждая команда создаёт свой API без учёта других, дублируются функциональности, нет единого каталога.
+
+**Компоненты governance:**
+
+1. **API catalog** — единый реестр всех API организации (внутренних и внешних). Для каждого API: название, владелец, версия, статус (active, deprecated, retired), документация, SLA.
+   - Инструменты: Swagger Hub, ReadMe, Azure API Management, AWS API Catalog.
+
+2. **API owner** — владелец API (команда или человек). Ответственность: качество, SLA, депрекация, документация. Без owner API «забывается» и деградирует.
+
+3. **API lifecycle** — жизненный цикл API:
+   - **Design** — проектирование (см. Q16).
+   - **Deploy** — публикация (staging → production).
+   - **Active** — нормальная работа, мониторинг.
+   - **Deprecated** — объявление депрекации (см. Q20).
+   - **Retired** — удаление.
+
+4. **API standards** — стандарты проектирования (style guide, см. Q17). Проставление: все API соответствуют style guide, либо задокументировано отклонение.
+
+5. **API testing** — тестирование: contract tests (Pact, см. Q8), E2E tests для критичных сценариев, load tests.
+
+6. **API monitoring** — мониторинг: metrics (QPS, latency p95/p99, error rate), logs (structured, корреляция с trace_id), alerts (Prometheus → PagerDuty).
 
 **Инструменты:**
-- **API catalog** — Swagger Hub, ReadMe
-- **API gateway** — Kong, AWS API Gateway
-- **API testing** — Pact, Spring Cloud Contract
-- **API monitoring** — Prometheus, Grafana
+- **API catalog** — Swagger Hub, ReadMe, Azure API Management.
+- **API gateway** — Kong, AWS API Gateway, Apigee (routing, auth, rate limiting, logging).
+- **API testing** — Pact, Spring Cloud Contract, Postman/Newman.
+- **API monitoring** — Prometheus, Grafana, Jaeger (tracing).
+
+**Компромиссы:**
+- Строгий governance (все API в каталоге, все соответствуют style guide) — полный контроль, но медленно (approval 1–2 недели).
+- Лёгкий governance (только каталог + owner) — быстро, но меньше контроля.
+- **Без governance** — API «размножаются», дублируются функциональности, нет единого каталога.
+
+**Вопросы интервьюера:**
+- «Как заставить команды соблюдать style guide?» — API review (Q16) + автоматическая проверка (OpenAPI lint, Spectral).
+- «Что делать с legacy API?» — deprecated → sunset (Q20) → retire. Не удалять «в лоб».
 
 ### 19. API monetization: как монетизировать API
+
+API monetization — модели оплаты за использование API. Важно для публичных API (Stripe, Twilio, Google Maps) и B2B-платформ.
+
 **Модели:**
-1. **Freemium** — базовый бесплатно, premium платно
-2. **Usage-based** — оплата по использованию (requests, data)
-3. **Subscription** — подписка (monthly, yearly)
-4. **Enterprise** — enterprise-лицензия
+
+1. **Freemium** — базовый функционал бесплатно, premium платно.
+   - Пример: Free: 100 requests/day, Pro: 10,000 requests/day ($10/month), Enterprise: unlimited ($1000/month).
+   - Плюс: низкий порог входа, conversion в paid. Минус: free-пользователи грузят инфраструктуру.
+
+2. **Usage-based** — оплата по использованию (requests, data, compute).
+   - Пример: AWS API Gateway: $1.00 per 1M requests + $0.0001 per GB data transfer.
+   - Плюс: клиент платит только за то, что использует. Минус: непредсказуемый расход (bill shock).
+
+3. **Subscription** — фиксированная плата за период (monthly, yearly).
+   - Пример: $99/month за 1M requests.
+   - Плюс: предсказуемый доход, simple billing. Минус: клиент может не использовать лимит.
+
+4. **Enterprise** — enterprise-лицензия (custom contract, SLA, dedicated support).
+   - Пример: $50K+/year за unlimited + 99.99% SLA + dedicated support.
+   - Плюс: высокий revenue, long-term контракт. Минус: долгий sales cycle (3–6 месяцев).
 
 **Инструменты:**
-- **Rate limiting** — ограничение запросов
-- **Quota management** — управление квотами
-- **Billing** — биллинг (Stripe, AWS)
-- **Usage tracking** — трекинг использования
+- **Rate limiting** — ограничение запросов по тарифу (Bucket4j + Redis, см. Q9 system-design).
+- **Quota management** — управление квотами (per-plan limits: requests/day, data/month).
+- **Billing** — биллинг (Stripe, AWS, custom).
+- **Usage tracking** — трекинг использования (metrics per-tenant: requests, data, compute).
+- **Metering** — сбор данных об использовании (Kafka → ClickHouse → billing report).
 
-**Пример:**
-```
-Free: 100 requests/day
-Pro: 10,000 requests/day ($10/month)
-Enterprise: unlimited ($1000/month)
-```
+**Компромиссы:**
+- Freemium — низкий порог входа, но free-пользователи грузят инфраструктуру.
+- Usage-based — справедливо, но bill shock (клиент получает неожиданный счёт).
+- Subscription — предсказуемо, но клиент может не использовать лимит.
+- Enterprise — высокий revenue, но долгий sales cycle.
+
+**Вопросы интервьюера:**
+- «Как отследить использование?» — metrics per-tenant (requests, data, compute) → Kafka → ClickHouse → billing report.
+- «Что делать при превышении лимита?» — 429 + `Retry-After` + notification клиенту. Для enterprise — мягкий exceed (grace period 24ч).
 
 ### 20. API deprecation: как корректно депрекатить API
-**Process:**
-1. **Announce** — объявить (changelog, email)
-2. **Mark** — пометить (deprecation header)
-3. **Notify** — уведомить (warnings)
-4. **Migrate** — помочь мигрировать
-5. **Retire** — удалить
 
-**Deprecation header:**
-```
-Deprecation: true
-Sunset: Sat, 01 Jan 2025 00:00:00 GMT
-Link: <https://api.example.com/v2/orders>; rel="successor-version"
-```
+Удаление API «в лоб» ломает клиентские приложения. Корректный процесс депрекации занимает месяцы и состоит из чётких этапов.
 
-**Timeline:**
-```
-Month 1: Announce (deprecation header)
-Month 2-3: Notify (warnings)
-Month 4: Migrate (help)
-Month 5: Retire (remove)
-```
+**Процесс (4 этапа):**
+
+1. **Announce (Объявление)** — добавление заголовков в ответы старого эндпоинта и обновление документации.
+   ```http
+   HTTP/1.1 200 OK
+   Deprecation: true
+   Sunset: Sat, 01 Jan 2028 00:00:00 GMT
+   Link: <https://api.example.com/v2/orders>; rel="successor-version"
+   ```
+   - `Deprecation: true` — признак, что API deprecated.
+   - `Sunset` (RFC 3298) — дата, когда API перестанет работать.
+   - `Link: rel="successor-version"` — ссылка на замену.
+
+2. **Monitor & Warn (Мониторинг)** — настройка алертов в API Gateway или логах. Если трафик на устаревший эндпоинт не падает за 1–2 месяца, команда связывается с владельцами клиентов.
+   - Metrics: QPS на устаревший эндпоинт (должен падать).
+   - Alert: если QPS > threshold за 2 недели → notification клиентам.
+
+3. **Soft Block (Опционально)** — возврат предупреждающих ошибок или искусственная задержка (latency) для стимуляции миграции.
+   - Пример: `X-Deprecation-Warning: This API will be removed on 2028-01-01. Use /v2/orders instead.`
+   - Для агрессивной миграции: +500 мс latency на устаревший эндпоинт.
+
+4. **Retire (Удаление)** — эндпоинт начинает возвращать `410 Gone` с ссылкой на документацию по миграции.
+   ```http
+   HTTP/1.1 410 Gone
+   Content-Type: application/problem+json
+
+   {
+     "type": "https://api.example.com/errors/deprecated",
+     "title": "API Deprecated",
+     "status": 410,
+     "detail": "This API was deprecated on 2027-01-01 and will be removed on 2028-01-01.",
+     "successor": "https://api.example.com/v2/orders"
+   }
+   ```
+
+**Компромиссы:**
+- **Длинный sunset period** (12+ месяцев): даёт клиентам время на миграцию, но увеличивает стоимость поддержки (нужно поддерживать две версии кода и тестов).
+- **Короткий sunset period** (1–3 месяца): быстро очищает кодовую базу, но гарантирует поломку сторонних интеграций и репутационные риски.
+
+**Лучшая практика:**
+- Sunset = 6–12 месяцев для публичных API, 3–6 месяцев для internal.
+- Всегда `Link: rel="successor-version"` — чтобы клиент знал, на что мигрировать.
+- Мониторить QPS на устаревший эндпоинт — если не падает, активно связываться с клиентами.
+
+> 🔗 Про версионирование и additive changes — см. Q9 "API versioning".
+
+**Вопросы интервьюера:**
+- «Что делать, если клиент не мигрирует?» — персональное письмо + call + (для enterprise) коммерческое давление (повышение тарифа на deprecated).
+- «Как проверить, что все смигрировали?» — metrics: QPS на устаревший эндпоинт = 0 в течение 2 недель после sunset.

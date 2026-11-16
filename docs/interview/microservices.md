@@ -363,7 +363,86 @@ Strangler Fig — постепенная миграция монолита на 
 
 ### 25. Как тестировать микросервисы
 
-На нескольких уровнях: модульные тесты (изоляция компонентов), интеграционные (взаимодействие с БД, брокерами, внешними API; часто через Testcontainers), контрактные (Pact) для проверки совместимости API, компонентные (сервис как чёрный ящик с заглушками зависимостей), end-to-end для сквозных сценариев, а также хаос-тестирование для проверки отказоустойчивости. Важна автоматизация в CI/CD.
+Пирамида тестов: чем ниже уровень — тем быстрее и дешевле тест, тем больше их должно быть; чем выше — тем медленнее и дороже, тем меньше.
+
+**1. Модульные тесты (Unit) — Mockito / JUnit 5:**
+- Бизнес-логика в изоляции: все зависимости (репозитории, клиенты других сервисов, Kafka producer) — моки.
+- Быстрые (< 100 мс), покрывают граничные случаи: null, пустые списки, исключения.
+- Основная масса тестов — 80%+ бизнес-логики.
+
+**2. Интеграционные тесты — Spring Boot Test + Testcontainers:**
+- **Testcontainers** — реальная инфраструктура в Docker-контейнерах прямо из тестов: PostgreSQL, Kafka, Redis, RabbitMQ. **Не H2, не MockBean** — реальное поведение.
+- `@ServiceConnection` (Spring Boot 3.1+) — Testcontainers сам подключает к Spring Bean.
+```java
+@SpringBootTest(webEnvironment = RANDOM_PORT)
+class OrderIntegrationTest {
+    @Testcontainers
+    static PostgreSQLContainer<?> pg = new PostgreSQLContainer<>("postgres:16");
+    @DynamicPropertySource
+    static void pgProps(DynamicPropertyRegistry r) {
+        r.add("spring.datasource.url", pg::getJdbcUrl);
+        r.add("spring.datasource.username", pg::getUsername);
+        r.add("spring.datasource.password", pg::getPassword);
+    }
+    @Autowired OrderRepository orderRepo;
+
+    @Test
+    void saveAndRead() {
+        orderRepo.save(new Order(1L));
+        assertThat(orderRepo.findById(1L)).isPresent();
+    }
+}
+```
+- **Почему не H2:** другой SQL-диалект (нет `JSONB`, `RETURNING`, `CONCURRENTLY`), разные ограничения — тесты проходят локально, но падают в проде на PostgreSQL. Testcontainers с реальным PostgreSQL исключает эту категорию багов.
+- Kafka: `kafka:3.x` + реальные producer/consumer; Redis: `redis:7`.
+
+**3. Контрактные тесты — Pact (Consumer-Driven Contract Testing):**
+- Потребитель (consumer) сервиса A описывает ожидаемый контракт от сервиса B → **Pact-файл** (JSON-описание).
+- Провайдер (provider) сервиса B на CI проверяет, что его API **соответствует** всем Pact-файлам потребителей.
+- **Pact Broker** — хранилище: consumer публикует, provider проверяет перед релизом.
+- Ключевое отличие от интеграционного: pact ловит **несовместимость контракта между командами** — если B изменил формат ответа, A узнаёт до деплоя, а не в проде.
+```java
+@Provider("OrderService")
+@PactBroker("https://pact.example.com")
+class OrderProviderTests {
+    @TestTemplate
+    void verifyPacts(@PactConsumer @PactProvider String consumer, ProviderState state) {
+        // Pact-фреймворк реализует каждый pact и проверяет реальный API
+    }
+}
+```
+- В связке с Testcontainers: pact provider поднимает реальную БД, не только REST-контракт.
+
+**4. Компонентные тесты:**
+- Один микросервис + mock зависимостей (WireMock для HTTP, mock Kafka consumer).
+- Cucumber/Gherkin для бизнес-сценариев: «Если клиент оплачивает заказ, то...».
+
+**5. End-to-End (E2E):**
+- Полный путь: клиент → API Gateway → 4–5 сервисов → БД → ответ.
+- Самый медленный и хрупкий слой; 20–30 тестов на весь проект.
+- Docker Compose / Testcontainers поднимают полную среду: 5 сервисов + Kafka + PostgreSQL + Redis.
+
+**6. Хаос-тестирование (Chaos Engineering):**
+- Chaos Monkey / Chaos Mesh (Kubernetes) — убийство контейнеров, задержка сети, убитие дисков.
+- **GameDay** — регулярные сессии: планово убивают сервис, смотрят мониторинг (SLO, error budget), документируют поведение.
+
+**Trade-offs:**
+- Unit — быстрые, но не ловят проблемы интеграции.
+- Testcontainers — реальная БД, но медленнее моков (контейнер стартует 5–15 с).
+- Pact — ловит неловкие контракты, но требует Pact Broker (ещё один компонент инфраструктуры).
+- E2E — самый ценный, но самый хрупкий: падает на любой временный сбой.
+
+**Best Practice:**
+- Пирамида: 70% unit + 20% интеграционные (Testcontainers) + 5% pact + 5% E2E.
+- Никогда не H2 в интеграционных — только реальный PostgreSQL через Testcontainers.
+- Pact между командами с отдельным API-контрактом — обязателен.
+- CI запускает все уровни параллельно (unit → интеграционные → pact → E2E последовательно).
+- Хаос-тесты — раз в месяц/квартал в стабильной среде (не в проде, кроме Chaos Monkey).
+
+**Follow-up (что спросит интервьюер):**
+- «H2 можно для интеграционных?» — нет: другой SQL-диалект, другой движок, другие ограничения.
+- «Pact vs интеграционный тест?» — pact проверяет совместимость контракта между командами, интеграционный — работоспособность сервиса со своей БД/queue.
+- «Testcontainers vs Docker Compose в тестах?» — Testcontainers управляет контейнером из Java-кода (поднять → тестировать → закрыть), Compose — статическая конфигурация.
 
 
 ### 26. Какие инструменты используются для оркестрации микросервисов
@@ -441,6 +520,36 @@ redis.execute(script, List.of(lockKey), requestId);
 ```
 - Плюс: простота, скорость (одна сетевая операция).
 - Минус: нет fencing (см. ниже) — если владелец завис (GC pause), замок «завис» вместе с ним до истечения TTL, и другие участники могут одновременно оказаться в критической секции.
+
+1a. Redis (через **Redisson** — стандарт де-факто в Java-проектах):
+- Вместо ручного написания Lua-скриптов — библиотека **Redisson** (`redisson:redisson`) даёт готовый `RLock` с правильным Lua-вызовом (SET NX + EXPIRE атомарно), retry-логикой и поддержкой reentrance (реентерантность — тот же поток может взять замок несколько раз).
+- **Watchdog**: если `lock.lock()` вызван без явного TTL, Redisson по умолчанию ставит TTL = 30 с и запускает фоновый **Watchdog**-таймер: каждые 10 с (1/3 от TTL) продлевает TTL, **пока у владельца есть связь с Redis**. Если владелец умер / завис, таймер не продлевает → TTL истекает → замок освобождается автоматически.
+- Если нужен фиксированный TTL (без автопродления) — `lock.lock(30, TimeUnit.SECONDS)`.
+```java
+@Autowired RedissonClient redissonClient;
+
+RLock lock = redissonClient.getLock("lock:inventory:recompute");
+// tryLock(waitTime, leaseTime, unit) — подождать до 1 с, держать 30 с
+boolean acquired = lock.tryLock(1, 30, TimeUnit.SECONDS);
+if (acquired) {
+    try {
+        inventoryService.recompute(); // критическая секция
+    } finally {
+        lock.unlock(); // освобождение через тот же Lua-скрипт (проверяет owner)
+    }
+}
+
+// Watchdog-вариант (без явного leaseTime):
+RLock wLock = redissonClient.getLock("lock:long-task");
+wLock.lock(); // TTL = 30 с, каждые 10 с продлевается, пока поток жив
+try {
+    longTask.execute();
+} finally {
+    wLock.unlock();
+}
+```
+- Плюс: reentrance, Watchdog, retry, `RLock` поддерживает мульти-машинный кластер (Cluster/Master-Slave) автоматически.
+- Минус: зависимость от Redisson (дополнительная библиотека).
 
 2. ZooKeeper (ephemeral nodes, эфемерные узлы):
 ```java
@@ -531,15 +640,44 @@ public Mono<OrderCompositeDto> getOrder(@PathVariable Long id) {
 }
 ```
 
+**Альтернатива: GraphQL** (`graphql-java` или `spring-graphql`):
+- Клиент сам определяет форму ответа: один запрос на `/graphql` с query по нужным полям → BFF (GraphQL Server) вызывает N микросервисов параллельно.
+- **DataLoader** (из `graphql-java`) — батчинг (batching) и кэширование N+1 на уровне графа: если 100 запросов к `order.items`, DataLoader собирает их в один `items?orderIds=1,2,...,100`.
+- Плюс: гибкость (клиент берёт только нужные поля), N+1 решается **DataLoader**, одна точка входа (BFF не нужен как отдельный сервис — GraphQL-сервер и есть BFF).
+- Минус: N+1 на уровне **графового запроса** — один `order` → `items` → `product` → `reviews` = 3 отдельных HTTP-вызова (нужен DataLoader + batch endpoint в каждом сервисе); кэш-стратегия сложнее (cache invalidation на поле, не на endpoint); introspection (автоматическое описание схемы) — риск утечки API.
+```java
+@GraphQLResolver
+public class OrderDataLoader {
+    // DataLoader — батчинг N+1
+    @BatchMapping(field = "items")
+    Map<Long, List<Item>> itemsByOrderId(List<Long> orderIds) {
+        return itemService.getByOrderIds(orderIds); // один запрос на N orderIds
+    }
+}
+```
+
 Когда BFF, когда API Gateway:
 - API Gateway — маршрутизация, auth, rate limiting; не знает о бизнес-логике, не знает о форме ответа.
 - BFF — составление данных, адаптация под конкретный клиент (веб, мобильное, TV); ответ оптимизирован под нужды конкретного клиента.
 - Один BFF на каждый тип клиента (веб-BFF, mobile-BFF) — чтобы не превращать в «белый дом для всех» (God Service).
 
-Типовые ошибки:
-- Синхронные последовательные вызовы → медленно (N * latency каждого сервиса). Нужно параллельно (Reactor, CompletableFuture).
-- Нет fallback (откатного поведения) → если один сервис упал, весь ответ 500. Нужно graceful degradation (плавная деградация) — вернуть часть данных + пометку об ошибке в недостающей части.
-- BFF = God Service — собирает данные для всех клиентов → сложно поддерживать, каждое изменение затрагивает всех.
+**Trade-offs:**
+- BFF (реактивный) — полный контроль над формой ответа, но каждая новая форма = новый BFF-метод.
+- GraphQL — гибкость на стороне клиента, но N+1 на уровне графа (нужен DataLoader), сложнее кэширование, introspection — риск утечки.
+- Последовательные вызовы → N × latency (медленно); параллельные → max(latency) (быстро).
+- Один общий BFF на всех клиентов → God Service; отдельный BFF на каждый клиент → больше кода, но изоляция.
+
+**Best Practice:**
+- Web/Mobile — один BFF на каждый тип клиента (веб-BFF, mobile-BFF).
+- Параллельные вызовы через Reactor (`Mono.zip` / `Flux.flatMap`) или CompletableFuture.
+- Graceful degradation: если один сервис упал → вернуть часть данных + пометка об ошибке, не 500.
+- Для сложных графовых зависимостей (N+1) — GraphQL + DataLoader.
+- Батчинг (batching) в микросервисах: `items?orderIds=1,2,3` — один запрос на N записей.
+
+**Follow-up (что спросит интервьюер):**
+- «BFF vs API Gateway?» — Gateway = маршрутизация + auth + rate limiting (не знает про бизнес-логику), BFF = составление данных (знает про форму ответа).
+- «GraphQL N+1?» — решается **DataLoader** (батчинг) + batch endpoint в каждом микросервисе.
+- «Почему не один BFF на всех?» — God Service: каждая новая форма ответа затрагивает всех.
 
 ### 30. Materialized views для CQRS
 
@@ -611,6 +749,22 @@ public void onOrderCreated(OrderCreatedEvent event) {
 - Materialized views — PostgreSQL (встроенная поддержка), сложные запросы (JOIN, GROUP BY).
 - Denormalization — MySQL (нет MV), простые запросы (достаточно добавить колонку в основную таблицу).
 
+**Trade-offs:**
+- MV — быстрый read (предвычислено), но есть lag между write и read (eventual consistency).
+- REFRESH CONCURRENTLY — не блокирует чтение, но требует уникальный индекс; обычный REFRESH блокирует.
+- MV дублирует данные (занимает место) — при 100 GB write-таблиц read-вид может быть 50 GB.
+- Denormalization — проще (одна таблица), но нет «истории» (нельзя откатить агрегацию).
+
+**Best Practice:**
+- CQRS + Outbox: write → outbox → Kafka → consumer обновляет MV (асинхронно).
+- REFRESH CONCURRENTLY — с уникальным индексом на ключевом поле.
+- Lag < 1 с — для 99% use-case; если бизнес требует «сразу» — не MV, а денормализация + синхронное обновление.
+- Мониторить lag (timestamp на write-модели vs read-вид) — алерт при > 10 с.
+
+**Follow-up (что спросит интервьюер):**
+- «REFRESH блокирует чтение?» — обычный REFRESH — да; CONCURRENTLY — нет (нужен уникальный индекс).
+- «Lag между write и read?» — через Outbox + Kafka — ~0.5–2 с; через триггеры — < 100 мс (но блокирует write).
+
 ### 31. Eventual consistency vs causal consistency, CRDT
 
 Eventual consistency (консистентность «в конечном счёте») — если новых записей нет, то все реплики в конечном счёте станут одинаковыми. Никакой гарантии когда именно.
@@ -653,6 +807,21 @@ Merge: {A: 3, B: 2} → total = 5
 | Конфликты | Могут быть (без автоматического разрешения) | Нет (для причинно-связанных операций) | Решаются автоматически |
 | Пример | DNS, CDN | Kafka (порядок в partition) | Figma, Google Docs |
 
+**Trade-offs:**
+- Eventual — самая простая (нет координации), но нет гарантии порядка → «старое имя + новый пост» видны одновременно.
+- Causal — гарантирует порядок для связанных операций, но требует vector clocks (сложнее).
+- CRDT — конфликты решаются автоматически, но не даёт «состояние в любой момент» и не гарантирует бизнес-инварианты.
+
+**Best Practice:**
+- Для распределённых систем с репликами — **Eventual** (DNS, CDN, каталог товаров).
+- Для Kafka-топиков — **Causal** (порядок в partition = causal consistency).
+- Для offline-first / co-editing — **CRDT** (Figma, Google Docs).
+- Для финансов / инвентаря — **строгая консистентность** (1 replica + ACID, не CRDT).
+
+**Follow-up (что спросит интервьюер):**
+- «CRDT vs 2PC?» — CRDT не координирует (merge local → global), 2PC координирует (commit prepare). CRDT — для offline-first, 2PC — для strict transactions.
+- «Vector clocks — зачем?» — для causal consistency: каждая реплика хранит вектор (A:3, B:2, C:1), merge по вектору определяет порядок.
+
 ### 32. SLO/SLI/SLA в микросервисах: error budgets
 
 SLI (Service Level Indicator, индикатор уровня сервиса) — измеримая метрика качества сервиса: uptime (доля успешных запросов), p95 latency (95-й перцентиль задержки — время, за которое выполняется 95% запросов), error rate (доля ошибок).
@@ -692,6 +861,24 @@ sum(rate(http_requests_total[1h])) > 0.001  # 0.1%
 - Каждый сервис — свои SLO, не один общий на всю систему.
 - SLO зависят от важности сервиса: критичный (заказ, оплата) — 99.95%; фоновый (отчёты, аналитика) — 99%.
 - Error budget учитывается при релизах: CI/CD проверяет canary (канареечную) фазу + SLO до полного rollout.
+
+**Trade-offs:**
+- SLO 99.95% (4 минуты простоя в месяц) — жёсткое требование, дорого (N+1 replica, multi-AZ).
+- SLO 99% (44 минуты) — дешевле, но бизнес-риск при критичных сервисах (оплата).
+- SLA с штрафами — бизнес-риск; SLO без штрафов — только внутренний контроль.
+- Error budget 0% → заморозка релизов — стабильно, но нет прогресса.
+
+**Best Practice:**
+- CRIITICAL (заказ, оплата) — 99.95% + multi-AZ.
+- STANDARD (каталог, поиск) — 99.9%.
+- BACKGROUND (отчёты, аналитика) — 99% + canary-деплой.
+- Burn rate alerting: 14.4x (день) + 1x (месяц) — две тревоги (Page + Ticket).
+- Error budget учтён в CI/CD: canary-фаза + SLO до rollout.
+
+**Follow-up (что спросит интервьюер):**
+- «SLO vs SLA?» — SLO = внутренняя цель (например, 99.9%); SLA = контракт с клиентом (штраф при нарушении).
+- «Burn rate 14.4x — откуда?» — 14.4 = 24 ч / (1.44 % × 30 дней) — если сжигать 14.4 раза быстрее базового → бюджет кончится за 1 день.
+- «Error budget 0% — что делать?» — заморозка релизов, только bugfix; вернуться к прогрессу только после восстановления SLO.
 
 ### 33. OpenTelemetry в микросервисах: traces, metrics, logs correlation
 
@@ -797,6 +984,23 @@ Best practice:
 - W3C Trace Context — для пропагации.
 - Structured logging (JSON) + MDC (trace_id, span_id) — в логах.
 - Grafana Explore — для корреляции (metrics → traces → logs).
+
+**Trade-offs:**
+- OTel — единый API, но нужно развернуть Collector (ещё один компонент).
+- Sampling: 1% — дешевле, но редкие ошибки теряются; 100% — дорого (спаны занимают место).
+- MDC в логах — correlation, но нужно настроить (каждый сервис вручную).
+- Prometheus pull vs OTLP push: pull — проще (метрики в одном месте), push — проще для ephemeral-сервисов (Lambda, K8s short-lived).
+
+**Best Practice:**
+- Java agent (auto-instrumentation) — без ручного кода.
+- Collector: DaemonSet (по ноду) — batching, sampling (1% в проде, 100% в debug), routing.
+- W3C Trace Context — стандарт, поддерживается большинством клиентов/серверов.
+- Grafana Explore — metrics → traces → logs (по trace_id).
+
+**Follow-up (что спросит интервьюер):**
+- «OTel vs Jaeger?» — OTel = стандарт (API, SDK, Collector), Jaeger = backend (хранение + визуализация). OTel может экспортировать в Jaeger, Prometheus, Elasticsearch.
+- «Sampling: 1% или 100%?» — 1% для прод (дешевле), 100% для debug / canary-фазы.
+- «Correlation logs ↔ traces?» — MDC (trace_id, span_id) в логах + Grafana Explore: клик на метрику → переход к trace_id → logs.
 
 ### 34. Idempotency keys: реализация, хранение
 
@@ -932,6 +1136,41 @@ public void onShippingFailed() {
 - Orchestrated без idempotency → повторное событие → двойной шаг (например, двойная оплата).
 - Compensating не идемпотентный → откат не работает при повторе (например, двойной refund).
 
+**Saga оркестраторы: сравнение фреймворков:**
+
+| | Spring Statemachine | Camunda / Zeebe | Temporal.io |
+|---|---|---|---|
+| Стиль | State machine (in-process) | BPMN (workflow engine) | Durable execution (gRPC) |
+| Состояние | In-memory / DB (нужно своё) | Встроенное (DB) | Встроенное (event history) |
+| SPOF | Да (or in-memory) | Нет (cluster) | Нет (cluster) |
+| Отладка | Простая (один JVM) | BPMN визуализация | UI (event history) |
+| Масштаб | Ограниченный (1 JVM) | Высокий (K8s) | Очень высокий (gRPC) |
+| Компенсации | Ручные (в коде) | Компенсирующие переходы | Handled activities |
+| Пример | Простая машина состояний | Заказ (5–10 сервисов) | Long-running (дни, недели) |
+| Инфраструктура | Java-библиотека | Camunda (Java) + DB | Temporal Cluster (Go + DB) |
+
+- **Spring Statemachine** — лёгкая библиотека (in-process). Для простых SSM, без отдельного кластера. SPOF — JVM.
+- **Camunda / Zeebe** — BPMN-движок (Camunda 7 — Java + DB, Zeebe — cloud-native, Go). Встроенное хранение, cluster, визуализация. Для заказ-процессов (5–10 сервисов).
+- **Temporal.io** — durable execution (gRPC). Каждый activity = один шаг; event history хранится; при рестарте сервиса — continuation. Для long-running (дни, недели) + high throughput. SPOF-свободный (cluster).
+
+**Trade-offs:**
+- In-process (Spring Statemachine) — просто, но SPOF (JVM) и нет визуализации.
+- BPMN (Camunda/Zeebe) — визуализация + cluster, но нужно развернуть Camunda (Java) или Zeebe (Go + DB).
+- Durable (Temporal) — самый мощный (high throughput, long-running), но нужно развернуть Temporal Cluster (Go + DB) и писать activities.
+- Choreographed — децентрализованный, но сложно отлаживать (поток размазан по N сервисам).
+
+**Best Practice:**
+- Простой SSM (< 5 переходов) — Spring Statemachine.
+- Заказ-процессы (5–10 сервисов) — Camunda (BPMN) — визуализация + компенсация.
+- Long-running (дни, недели) + high throughput — Temporal.io.
+- Choreographed — только для простых процессов (оплата, уведомление).
+- Всегда idempotency + event sourcing (хранение истории переходов) — чтобы понимать текущее состояние.
+
+**Follow-up (что спросит интервьюер):**
+- «Temporal vs Camunda?» — Temporal = durable execution (gRPC, activities), Camunda = BPMN (workflow engine). Temporal — для high throughput + long-running, Camunda — для визуализации заказ-процессов.
+- «SPOF в Orchestrated?» — да, если in-process (Spring Statemachine). Нет, если cluster (Camunda, Temporal).
+- «Как компенсация в Temporal?» — Handled activity: каждый шаг — `Activity.execute()`, при ошибке — `CompensateActivity.execute()`; event history хранит все переходы.
+
 ### 36. Multi-tenancy: schema-per-tenant, row-level security, discriminator
 
 Multi-tenancy (многонаёмность) — одна система (сервер, БД, приложение) обслуживает многих арендаторов (tenants — разных компаний, пользователей, организаций). Данные разных арендаторов должны быть изолированы (не смешиваться).
@@ -981,8 +1220,78 @@ connection.createStatement().execute("SET app.tenant_id = '" + tenantId + "'");
 | Сложность | Высокая | Средняя | Средняя | Низкая |
 | Ошибки | Мало (изоляция) | Мало | Мало (RLS) | Много (забыл tenant_id) |
 
-Best practice:
-- Мало tenants (< 10), нужна высокая изоляция → DB-per-Tenant.
-- Средне tenants (10–100), нужна изоляция → Schema-per-Tenant или RLS.
-- Много tenants (> 100), важны ресурсы и масштабирование → RLS (PostgreSQL) или Discriminator (с осторожностью и строгими тестами).
-- Всегда тестировать изоляцию: попытка доступа к данным другого tenant должна быть отклонена.
+**Hibernate / Spring Boot конфигурация multi-tenancy:**
+
+Spring Boot 2.x и старше поддерживает 3 встроенных режима через `spring.jpa.properties.hibernate.multiTenancy`:
+
+```yaml
+spring:
+  jpa:
+    properties:
+      hibernate:
+        multiTenancy: DISCRIMINATOR   # или SCHEMA, или DATABASE
+        tenant_id_column: tenant_id   # для DISCRIMINATOR
+```
+
+| Режим | `hibernate.multiTenancy` | Что делает | Когда |
+|---|---|---|---|
+| **DISCRIMINATOR** | `DISCRIMINATOR` | Hibernate добавляет `WHERE tenant_id = ?` к каждому запросу (как Discriminator выше) | Одна таблица, много tenants, приложение управляет tenant_id |
+| **SCHEMA** | `SCHEMA` | Hibernate переключает `currentSchema` для каждой сессии | Одна БД, N схем |
+| **DATABASE** | `DATABASE` | Hibernate переключает DataSource для каждого tenant | N БД |
+
+Для **RLS** (PostgreSQL) — Hibernate не поддерживает нативно; нужно вручную:
+
+```java
+// Spring Boot + PostgreSQL RLS:
+@Component
+public class TenantContextFilter extends OncePerRequestFilter {
+    @Override
+    protected void doFilterInternal(HttpServletRequest req,
+                                    HttpServletResponse res, FilterChain chain)
+            throws ServletException, IOException {
+        String tenantId = req.getHeader("X-Tenant-Id");
+        // Установить tenant_id в connection (RLS подхватит):
+        DataSource ds = ...;
+        try (Connection conn = ds.getConnection();
+             Statement st = conn.createStatement()) {
+            st.execute("SET app.tenant_id = '" + tenantId + "'");
+        }
+        chain.doFilter(req, res);
+    }
+}
+```
+
+**TenantIdentifierResolver** (для SCHEMA и DATABASE — Spring Boot использует):
+
+```java
+@Component
+public class TenantIdentifierResolverImpl
+        implements TenantIdentifierResolver {
+    @Override
+    public String resolveCurrentTenantIdentifier() {
+        return TenantContext.get().getTenantId(); // из ThreadLocal / SecurityContext
+    }
+    @Override
+    public Collection<String> getAllTenantIdentifiers() {
+        return tenantRepo.findAllTenantIds();
+    }
+}
+```
+
+**Trade-offs:**
+- DB-per-Tenant — максимальная изоляция, но дорого (N БД, N бэкапов, N соединений).
+- Schema-per-Tenant — изоляция + одна БД, но N схем = ограничение PostgreSQL (64K relations).
+- RLS — одна таблица, но нужно не забыть `SET app.tenant_id` — если забыл, запрос увидит **все** tenants.
+- DISCRIMINATOR (Hibernate) — проще, но Hibernate добавляет `WHERE tenant_id` — если забудешь колонку → ошибка.
+
+**Best Practice:**
+- < 10 tenants + высокая изоляция → **DB-per-Tenant** + `DATABASE` (Hibernate).
+- 10–100 tenants + изоляция → **Schema-per-Tenant** + `SCHEMA` (Hibernate) или RLS (PostgreSQL).
+- > 100 tenants + ресурсы → **RLS** (PostgreSQL) или **DISCRIMINATOR** (Hibernate) + строгие тесты изоляции.
+- Всегда: **TenantContext** (ThreadLocal / SecurityContext) → фильтр → `SET app.tenant_id` (RLS) или `TenantIdentifierResolver` (Hibernate).
+- Тестировать: запрос с tenant_id=A **не** должен увидеть данные tenant_id=B.
+
+**Follow-up (что спросит интервьюер):**
+- «Как Hibernate знает tenant?» — через `TenantIdentifierResolver` (реализация — возвращает tenant_id из ThreadLocal / SecurityContext).
+- «RLS vs DISCRIMINATOR?» — RLS = изоляция на уровне БД (политика), DISCRIMINATOR = изоляция на уровне Hibernate (WHERE в каждом запросе). RLS безопаснее (забыл tenant_id в коде → БД всё равно отфильтрует).
+- «Что если забыл tenant_id?» — RLS: запрос увидит все tenants (критичная ошибка). DISCRIMINATOR: Hibernate добавит `WHERE tenant_id = null` → 0 строк (безопаснее, но данные не найдены).
