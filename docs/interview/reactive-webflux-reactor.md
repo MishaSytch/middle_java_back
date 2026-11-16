@@ -70,6 +70,37 @@ Flux.range(1, 10_000)
 **Почему flatMap — самый частый источник багов**: разработчик привык к «синхронному» мышлению и не понимает, что `fetchRemote` — это **асинхронная подписка**, а не вызов. Если `fetchRemote` внутри блокирует (`.block()` в реактивном коде) — это блокирует event-loop поток → deadlock/зависание. Правило: **никогда не блокируй внутри реактивной цепочки**.
 
 
+
+
+**Hot vs Cold Publisher:**
+
+Это фундаментальное различие в том, **когда и как** начинают генерироваться данные:
+
+- **Cold Publisher** — данные генерируются **заново для каждого подписчика**. Подписка инициирует работу.
+  - Примеры: `Mono.just()`, `Flux.fromIterable()`, HTTP-запрос через `WebClient`, запрос к БД через R2DBC.
+  - Аналогия: видео на YouTube — каждый зритель смотрит с начала.
+
+- **Hot Publisher** — данные генерируются **независимо от наличия подписчиков**. Подписчик получает только те события, которые произошли после его подписки.
+  - Примеры: `Sinks.Many`, события мыши, котировки акций, WebSocket.
+  - Аналогия: прямая трансляция — подключившись, видишь только текущий момент.
+
+```java
+// Cold: каждый подписчик получает 1, 2, 3
+Flux<Integer> cold = Flux.range(1, 3);
+cold.subscribe(i -> System.out.println("A: " + i)); // A: 1, 2, 3
+cold.subscribe(i -> System.out.println("B: " + i)); // B: 1, 2, 3
+
+// Hot: второй подписчик видит только 3
+Sinks.Many<Integer> hot = Sinks.many().multicast().onBackpressureBuffer();
+hot.asFlux().subscribe(i -> System.out.println("A: " + i));
+hot.tryEmitNext(1);
+hot.tryEmitNext(2);
+hot.asFlux().subscribe(i -> System.out.println("B: " + i)); // B не видит 1, 2
+hot.tryEmitNext(3); // A: 3, B: 3
+```
+
+**Почему это важно:** если вы используете Cold Publisher для получения данных из внешнего API и подписываетесь на него дважды, вы сделаете **два реальных HTTP-запроса**. Чтобы избежать этого, нужно превратить его в Hot с помощью `.cache()` или `.share()`.
+
 ### 4. Что такое backpressure и как он работает
 
 **Backpressure (обратное давление)** — механизм, при котором **подписчик управляет темпом** издателя. Это ключевое отличие от «просто пуш» (callback'ов, listen-ер'ов).
@@ -730,151 +761,118 @@ class UserControllerTest {
 
 
 
+
+
+**Тестирование временных операторов (Virtual Time):**
+
+Использование реальных задержек (`delayElements`, `timeout`) в тестах делает их медленными и хрупкими. Reactor предоставляет `VirtualTimeScheduler`, который позволяет "промотать" время мгновенно:
+
+```java
+@Test
+void testDelayWithVirtualTime() {
+    StepVerifier.withVirtualTime(() ->
+        Mono.just("data").delayElement(Duration.ofHours(2))
+    )
+    .expectSubscription()
+    .expectNoEvent(Duration.ofHours(1))
+    .thenAwait(Duration.ofHours(1))  // Мгновенно "перематываем" время ещё на час
+    .expectNext("data")
+    .verifyComplete();
+}
+```
+
+Это стандарт для тестирования `timeout`, `delayElements`, `interval` и `window`. Без VirtualTime тест с `delayElements(Duration.ofHours(1))` будет длиться 3 часа.
+
+**Ограничение**: VirtualTime работает только с `Schedulers.parallel()` и `Schedulers.single()`. Для `boundedElastic` нужно использовать реальные задержки или моки.
+
 ### 14. Что такое Sinks и как их использовать для broadcast
 
-**Sinks** (Reactor 3.4+) = **multi-emit** **publisher** (1 **source** → **N** **subscribers**).
+**Sinks** (Reactor 3.4+) — это механизм для создания **multi-emit publisher**, где один источник данных может иметь несколько подписчиков. Это решает фундаментальное ограничение `Mono`/`Flux`, которые по умолчанию являются single-subscriber (один источник — один подписчик).
 
-**Проблема**:
-- **Mono/Flux** = **single subscriber** (1 **source** → **1** **subscriber**).
-- **Нужно**: **1** **source** → **N** **subscribers** (например: **broadcast** **notification**).
+**Типичные сценарии:**
+- Broadcast уведомлений всем подключённым WebSocket-клиентам.
+- Публикация событий из одного сервиса нескольким потребителям.
+- Реализация event bus внутри приложения.
 
-**Sinks (Reactor 3.4+)**:
+**Пример использования:**
 ```java
-// Create sink:
+// Создаём Sink с multicast (1 source → N subscribers) и backpressure buffer
 Sinks.Many<String> sink = Sinks.many().multicast().onBackpressureBuffer();
 
-// Emit:
-sink.emitNext("message-1", (s, r) -> true);
-sink.emitNext("message-2", (s, r) -> true);
+// Эмитим события
+sink.emitNext("event-1", Sinks.EmitFailureHandler.FAIL_FAST);
+sink.emitNext("event-2", Sinks.EmitFailureHandler.FAIL_FAST);
 
-// Subscribe (N subscribers):
-sink.asFlux().subscribe(
-  value -> System.out.println("Subscriber 1: " + value),
-  error -> System.err.println("Error: " + error),
-  () -> System.out.println("Complete")
-);
+// Подписываем несколько потребителей
+sink.asFlux().subscribe(event -> System.out.println("Consumer A: " + event));
+sink.asFlux().subscribe(event -> System.out.println("Consumer B: " + event));
 
-sink.asFlux().subscribe(
-  value -> System.out.println("Subscriber 2: " + value),
-  error -> System.err.println("Error: " + error),
-  () -> System.out.println("Complete")
-);
+// Оба потребителя получат event-1 и event-2
 ```
 
-**Sinks.Many**:
-- **multicast**: **1** **source** → **N** **subscribers**.
-- **onBackpressureBuffer**: **buffer** **messages** (если **subscriber** **slow**).
-- **onBackpressureDrop**: **drop** **messages** (если **subscriber** **slow**).
+**Варианты Sinks.Many:**
+- **`multicast()`** — один источник, много подписчиков (broadcast).
+- **`unicast()`** — один источник, один подписчик (очередь).
+- **`replay()`** — один источник, много подписчиков + новые подписчики получают историю.
 
-**Sinks.One**:
-- **1** **source** → **1** **subscriber** (например: **CompletableFuture**).
+**Backpressure стратегии:**
+- **`onBackpressureBuffer()`** — буферизует события, если подписчик медленный.
+- **`onBackpressureDrop()`** — отбрасывает события, если подписчик не успевает.
 
+**Sinks.One** — аналог `CompletableFuture` для одного значения:
 ```java
-// Sinks.One (1-to-1):
 Sinks.One<String> sink = Sinks.one();
-sink.emitValue("result", (v, r) -> true);
-sink.asMono().subscribe(System.out::println);
+sink.emitValue("result", Sinks.EmitFailureHandler.FAIL_FAST);
+sink.asMono().subscribe(System.out::println); // "result"
 ```
 
-**Вывод**: **Sinks** = **multi-emit** **publisher** (1 **source** → **N** **subscribers**). **Sinks.Many**: **multicast** (N **subscribers**), **onBackpressureBuffer** (buffer), **onBackpressureDrop** (drop). **Sinks.One**: **1-to-1** (например: **CompletableFuture**).
+**Важно**: `emitNext`/`emitValue` возвращают `EmitResult`, который нужно проверять. `FAIL_FAST` бросает исключение при ошибке эмитирования (например, если нет подписчиков для unicast).
 
-### 15. Что такое Reactor Context и как передавать данные через цепочку
+### 15. Интеграция Context с MDC (Mapped Diagnostic Context)
 
-**Reactor Context** = **immutable** **context** (key-value) **для** **цепочки** **операторов**.
+В классическом Spring MVC `MDC` (SLF4J) используется для передачи `trace_id`, `user_id` через `ThreadLocal`. В Reactor `ThreadLocal` не работает (поток меняется между операциями), поэтому MDC нужно пробрасывать через `Context`:
 
-**Проблема**:
-- **ThreadLocal** **не работает** в **reactive** (поток **меняется**).
-- **Нужно**: **передавать** **данные** (например: **trace_id**, **user_id**) через **цепочку**.
-
-**Context (Reactor)**:
 ```java
-// Create context:
-Context context = Context.of("trace_id", "abc123", "user_id", "user_42");
-
-// Pass through chain:
-Flux.just("event-1", "event-2")
-  .doOnNext(event -> {
-    // Read context:
-    String traceId = Context.current().getOrDefault("trace_id", "none");
-    System.out.println(traceId + ": " + event);
-  })
-  .contextWrite(context);
-```
-
-**Context (Spring WebFlux)**:
-```java
-// Controller:
-@GetMapping("/events")
-public Flux<Event> getEvents() {
-  return eventService.getEvents()
-    .contextWrite(Context.of("request_id", UUID.randomUUID().toString()));
-}
-
-// Service:
-public Flux<Event> getEvents() {
-  return Flux.deferContextual(ctx -> {
-    String requestId = ctx.getOrDefault("request_id", "none");
-    log.info("Processing events with request_id={}", requestId);
-    return eventRepository.findAll();
-  });
-}
-```
-
-**Context (MDC)**:
-```java
-// Propagate MDC to Reactor Context:
+// Пробрасываем MDC в Context
 Context context = Context.of("mdc", MDC.getCopyOfContextMap());
 
-// Read MDC:
 Flux.deferContextual(ctx -> {
-  Map<String, String> mdc = ctx.get("mdc");
-  MDC.setContextMap(mdc);
-  return doWork();
-}).contextWrite(Context.of("mdc", MDC.getCopyOfContextMap()));
+    Map<String, String> mdc = ctx.getOrDefault("mdc", Map.of());
+    MDC.setContextMap(mdc); // Восстанавливаем MDC в текущем потоке
+    return doWork();
+}).contextWrite(context);
 ```
 
-**Вывод**: **Reactor Context** = **immutable** **context** (key-value) **для** **цепочки**. **ThreadLocal** **не работает** в **reactive**. **Context.of** (create), **contextWrite** (pass), **Context.current()** (read). **MDC**: **propagate** через **Context**.
+**Spring WebFlux автоматически** пробрасывает `trace_id` из OpenTelemetry в Context, поэтому для базовой трассировки ручная работа не нужна.
 
-### 16. Как настроить WebClient: retries, timeouts, circuit breaker
+**Ограничение**: MDC восстанавливается только в том потоке, где выполняется `deferContextual`. Если цепочка переключается между потоками (через `publishOn`/`subscribeOn`), MDC нужно восстанавливать на каждом переключении.
 
-**WebClient** = **reactive** **HTTP** **client** (Spring WebFlux).
+### 16. Настройка WebClient: timeouts, retries, circuit breaker
 
-**Настройка**:
-```java
-// Create WebClient:
-WebClient webClient = WebClient.builder()
-  .baseUrl("http://orders-service")
-  .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
-  .build();
-```
-
-**Timeouts**:
+**Timeouts** (на уровне Reactor Netty):
 ```java
 HttpClient httpClient = HttpClient.create()
-  .responseTimeout(Duration.ofSeconds(30))  // Response timeout
-  .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 5000)  // Connect timeout
+    .responseTimeout(Duration.ofSeconds(30))
+    .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 5000);
 
 WebClient webClient = WebClient.builder()
-  .clientConnector(new ReactorClientHttpConnector(httpClient))
-  .build();
+    .clientConnector(new ReactorClientHttpConnector(httpClient))
+    .build();
 ```
 
-**Retries**:
+**Retries** (exponential backoff):
 ```java
-// Retry with backoff:
 Flux<Event> events = webClient.get()
-  .uri("/events")
-  .retrieve()
-  .bodyToFlux(Event.class)
-  .retryWhen(Retry.backoff(3, Duration.ofSeconds(1))
-    .maxBackoff(Duration.ofSeconds(10))
-    .filter(throwable -> throwable instanceof TimeoutException)
-  );
+    .uri("/events")
+    .retrieve()
+    .bodyToFlux(Event.class)
+    .retryWhen(Retry.backoff(3, Duration.ofSeconds(1))
+        .maxBackoff(Duration.ofSeconds(10))
+        .filter(throwable -> throwable instanceof TimeoutException));
 ```
 
-**Circuit Breaker (Resilience4j)**:
-```java
-// application.yml:
+**Circuit Breaker** (Resilience4j):
+```yaml
 resilience4j:
   circuitbreaker:
     instances:
@@ -882,46 +880,33 @@ resilience4j:
         failureRateThreshold: 50
         slidingWindowSize: 10
         waitDurationInOpenState: 30s
-
-// @Service:
+```
+```java
 @Service
 public class OrderClient {
-  @Autowired private WebClient webClient;
-  
-  @CircuitBreaker(name = "orders-service", fallbackMethod = "getOrderFallback")
-  public Mono<Order> getOrder(Long id) {
-    return webClient.get()
-      .uri("/orders/{id}", id)
-      .retrieve()
-      .bodyToMono(Order.class);
-  }
-  
-  private Mono<Order> getOrderFallback(Long id, Throwable t) {
-    return Mono.just(new Order(id, "FALLBACK"));
-  }
+    @CircuitBreaker(name = "orders-service", fallbackMethod = "getOrderFallback")
+    public Mono<Order> getOrder(Long id) {
+        return webClient.get()
+            .uri("/orders/{id}", id)
+            .retrieve()
+            .bodyToMono(Order.class);
+    }
+
+    private Mono<Order> getOrderFallback(Long id, Throwable t) {
+        return Mono.just(new Order(id, "FALLBACK"));
+    }
 }
 ```
 
-**Вывод**: **WebClient** = **reactive** **HTTP** **client**. **Timeouts**: **responseTimeout**, **CONNECT_TIMEOUT**. **Retries**: **Retry.backoff** (N **retries**, **backoff**). **Circuit Breaker**: **Resilience4j** (**@CircuitBreaker**, **fallbackMethod**).
+**Компромиссы:**
+- `Retry.backoff` — встроено в Reactor, без зависимостей, но нет метрик.
+- Resilience4j `@CircuitBreaker` — метрики, dashboard, fallback, но зависимость.
+- Для production — всегда Resilience4j (или аналог) для circuit breaker + retry.
 
-### 17. Что такое R2DBC и как он работает
+### 17. R2DBC в Spring Boot: ReactiveCrudRepository
 
-**R2DBC** (Reactive Relational Database Connectivity) = **reactive** **DB** **driver** (не **JDBC**).
-
-**Проблема**:
-- **JDBC** = **blocking** (1 **thread** → **1** **query**).
-- **R2DBC** = **non-blocking** (1 **thread** → **N** **queries**).
-
-**R2DBC (Spring Boot)**:
-```xml
-<dependency>
-  <groupId>org.springframework.boot</groupId>
-  <artifactId>spring-boot-starter-data-r2dbc</artifactId>
-</dependency>
-```
-
+**Конфигурация** (Spring Boot auto-config из `application.yml`):
 ```yaml
-# application.yml:
 spring:
   r2dbc:
     url: r2dbc:postgresql://localhost:5432/mydb
@@ -929,214 +914,193 @@ spring:
     password: pass
 ```
 
-**Repository**:
+**Repository** (аналог `CrudRepository` из Spring Data JPA):
 ```java
-// Entity:
 @Table("orders")
 public class Order {
-  @Id
-  private Long id;
-  private String customer;
-  private BigDecimal amount;
+    @Id
+    private Long id;
+    private String customer;
+    private BigDecimal amount;
 }
 
-// Repository:
 public interface OrderRepository extends ReactiveCrudRepository<Order, Long> {
-  Flux<Order> findByCustomer(String customer);
-  Flux<Order> findByAmountGreaterThan(BigDecimal amount);
+    Flux<Order> findByCustomer(String customer);
+    Mono<Order> findById(Long id);
+    Flux<Order> findByAmountGreaterThan(BigDecimal amount);
 }
 ```
 
-**Query**:
+**Custom queries:**
 ```java
-// Custom query:
 @Query("SELECT * FROM orders WHERE amount > :amount")
 Flux<Order> findByAmountGreaterThan(@Param("amount") BigDecimal amount);
 
-// Native query:
 @Query(value = "SELECT * FROM orders WHERE customer = :customer", nativeQuery = true)
 Flux<Order> findByCustomerNative(@Param("customer") String customer);
 ```
 
-**Service**:
+**Service:**
 ```java
 @Service
 public class OrderService {
-  @Autowired private OrderRepository orderRepo;
-  
-  public Flux<Order> getOrdersByCustomer(String customer) {
-    return orderRepo.findByCustomer(customer)
-      .flatMap(order -> orderRepo.findById(order.getId())
-        .map(o -> o));
-  }
+    private final OrderRepository orderRepo;
+
+    public Flux<Order> getOrdersByCustomer(String customer) {
+        return orderRepo.findByCustomer(customer);
+    }
 }
 ```
 
-**Вывод**: **R2DBC** = **reactive** **DB** **driver** (не **JDBC**). **JDBC** = **blocking** (1 **thread** → **1** **query**). **R2DBC** = **non-blocking** (1 **thread** → **N** **queries**). **Spring Boot**: **spring-boot-starter-data-r2dbc**. **Repository**: **ReactiveCrudRepository**.
+**Компромиссы:**
+- `ReactiveCrudRepository` — просто, без ручного SQL, но ограничен (нет `@Transactional` в привычном виде).
+- `DatabaseClient` (из Q9) — полный контроль над SQL, транзакциями, но больше кода.
+- Для простых CRUD — `ReactiveCrudRepository`, для сложных запросов/транзакций — `DatabaseClient`.
 
 ### 18. Как работать с WebSocket в WebFlux
 
-**WebSocket** = **full-duplex** **connection** (client ↔ server).
+**WebSocket** — full-duplex соединение (клиент ↔ сервер). В WebFlux WebSocket-сессия представлена как `WebSocketSession`, который содержит `Flux<WebSocketMessage>` для входящих сообщений и `Mono<Void> send(Publisher<WebSocketMessage>)` для исходящих.
 
-**WebFlux WebSocket**:
+**Сервер:**
 ```java
-// Controller:
 @Controller
 public class WsController {
-  @Autowired private WebSocketHandler wsHandler;
-  
-  @Bean
-  public RouterFunction<ServerResponse> routes() {
-    return RouterFunctions.route()
-      .websocket("/ws", wsHandler)
-      .build();
-  }
+    @Bean
+    public RouterFunction<ServerResponse> routes(WebSocketHandler wsHandler) {
+        return RouterFunctions.route()
+            .websocket("/ws", wsHandler)
+            .build();
+    }
 }
 
-// Handler:
 @Component
 public class WsHandler implements WebSocketHandler {
-  @Override
-  public Mono<Void> handle(WebSocketSession session) {
-    return session.send(
-      session.receive()
-        .map(msg -> {
-          // Echo:
-          return session.textMessage("echo: " + msg.getPayloadAsText());
-        })
-    );
-  }
+    @Override
+    public Mono<Void> handle(WebSocketSession session) {
+        return session.send(
+            session.receive()
+                .map(msg -> session.textMessage("echo: " + msg.getPayloadAsText()))
+        );
+    }
 }
 ```
 
-**Client**:
+**Клиент:**
 ```java
-// WebClient WebSocket:
 WebSocketClient client = WebSocketClient.create();
 client.execute(URI.create("ws://localhost:8080/ws"), session -> {
-  session.send(Mono.just(session.textMessage("hello")))
-    .then();
-  
-  return session.receive()
-    .doOnNext(msg -> System.out.println(msg.getPayloadAsText()))
-    .then();
+    session.send(Mono.just(session.textMessage("hello"))).then();
+    return session.receive()
+        .doOnNext(msg -> System.out.println(msg.getPayloadAsText()))
+        .then();
 });
 ```
 
-**Вывод**: **WebSocket** = **full-duplex** (client ↔ server). **WebFlux**: **RouterFunctions** (**websocket**), **WebSocketHandler**. **Client**: **WebSocketClient** (**execute**).
+**Типичные сценарии:**
+- Чат: эхо + broadcast через `Sinks.Many` (Q14).
+- Real-time обновления: клиент подписывается на `session.receive()`, сервер пушит через `session.send()`.
+- Auth: проверка JWT в `handle()` перед началом обмена.
 
-### 19. Что такое Server-Sent Events (SSE) в WebFlux
+**Компромиссы:**
+- WebSocket — full-duplex, но сложнее (нужно управлять соединением, reconnect, keep-alive).
+- SSE (Q19) — односторонний, проще, но только server → client.
 
-**SSE** (Server-Sent Events) = **server-push** (server → client).
+### 19. Server-Sent Events (SSE) в WebFlux
 
-**WebFlux SSE**:
+**SSE** (Server-Sent Events) — односторонний push-канал (сервер → клиент) поверх HTTP. В WebFlux SSE реализуется через `Flux<ServerSentEvent<T>>` с `produces = MediaType.TEXT_EVENT_STREAM_VALUE`.
+
+**Сервер:**
 ```java
-// Controller:
 @GetMapping(value = "/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
 public Flux<ServerSentEvent<String>> events() {
-  return Flux.interval(Duration.ofSeconds(1))
-    .map(i -> ServerSentEvent.<String>builder()
-      .data("event-" + i)
-      .id(String.valueOf(i))
-      .comment("auto-generated")
-      .build());
+    return Flux.interval(Duration.ofSeconds(1))
+        .map(i -> ServerSentEvent.<String>builder()
+            .data("event-" + i)
+            .id(String.valueOf(i))
+            .comment("auto-generated")
+            .build());
 }
 ```
 
-**Client**:
+**Клиент (браузер):**
 ```javascript
-// Browser:
 const es = new EventSource("http://localhost:8080/events");
 es.onmessage = (e) => console.log(e.data);
 es.onerror = () => console.error("SSE error");
 ```
 
-**SSE vs WebSocket**:
+**SSE vs WebSocket:**
+
 | Фича | SSE | WebSocket |
 |------|-----|-----------|
-| Direction | **server → client** | **full-duplex** |
-| Protocol | **HTTP** | **WS** |
-| Reconnection | **auto** (browser) | **manual** |
-| Data format | **text** | **binary/text** |
-| Use case | **notifications** | **real-time** (chat) |
+| Направление | server → client | full-duplex |
+| Протокол | HTTP | WS |
+| Reconnection | авто (браузер) | вручную |
+| Формат данных | текст | бинарный/текст |
+| Сценарий | уведомления, метрики | чат, real-time |
 
-**Вывод**: **SSE** = **server-push** (server → client). **WebFlux**: **Flux<ServerSentEvent>** (produces = **TEXT_EVENT_STREAM**). **Client**: **EventSource** (browser). **SSE** = **notifications**, **WebSocket** = **real-time**.
+**Когда что:**
+- **SSE**: уведомления, live-метрики, progress-бары (односторонний push, простой).
+- **WebSocket**: чат, совместное редактирование, real-time игры (двусторонний обмен).
 
-### 20. Как настроить reactive application в Kubernetes
+### 20. Reactor в Kubernetes: ресурсы, автоскейлинг, backpressure
 
-**Reactive** + **K8s** = **non-blocking** **application** (1 **thread** → **N** **requests**).
+**Почему Reactor + K8s — хорошая пара:**
 
-**K8s deployment**:
+Reactive-приложение использует **немного потоков** (4-8 event-loop'ов), но обрабатывает **множество** одновременных соединений. Это значит, что:
+- **Меньше CPU** на реплику (не нужно 200 потоков × 1MB stack = 200MB).
+- **Меньше памяти** (нет пула из 100+ потоков).
+- **Быстрее cold start** (меньше потоков инициализировать).
+
+**Resources (deployment):**
 ```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: reactive-app
-spec:
-  replicas: 3
-  template:
-    spec:
-      containers:
-      - name: app
-        image: reactive-app:1.0
-        resources:
-          requests:
-            cpu: 100m  # Low CPU (reactive)
-            memory: 256Mi  # Low memory
-          limits:
-            cpu: 500m
-            memory: 512Mi
-        livenessProbe:
-          httpGet:
-            path: /actuator/health/liveness
-            port: 8080
-        readinessProbe:
-          httpGet:
-            path: /actuator/health/readiness
-            port: 8080
+resources:
+  requests:
+    cpu: 100m    # Reactor: мало CPU (event-loop)
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
 ```
 
-**HPA (Horizontal Pod Autoscaler)**:
+**HPA (автоскейлинг):**
 ```yaml
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: reactive-app-hpa
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: reactive-app
-  minReplicas: 3
-  maxReplicas: 10
-  metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      target:
-        type: Utilization
-        averageUtilization: 70
+metrics:
+- type: Resource
+  resource:
+    name: cpu
+    target:
+      type: Utilization
+      averageUtilization: 70
 ```
 
-**Ingress**:
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: reactive-app-ingress
-spec:
-  rules:
-  - host: api.example.com
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: reactive-app-service
-            port:
-              number: 8080
-```
+**Backpressure и K8s:**
 
-**Вывод**: **Reactive** + **K8s** = **non-blocking** **application**. **Resources**: **low** **CPU**/**memory** (reactive). **HPA**: **CPU** **utilization** (70%). **Ingress**: **host** → **service**.
+Ключевое преимущество Reactor в K8s: **backpressure защищает от OOM**. Если downstream-сервис (например, БД) замедляется, Reactor **не накапливает** тысячи неprocessed'ных событий в памяти — он **замедляет** upstream через `request(n)`. В thread-per-request модели (MVC) медленный downstream → очередь из 1000+ blocked threads → OOM.
 
+**Типичная конфигурация:**
+- **CPU requests/limits**: 100m/500m (Reactor не потребляет много CPU).
+- **Memory**: 256Mi/512Mi (мало потоков = мало stack memory).
+- **HPA**: по CPU utilization 70% (или по custom metrics: active connections).
+- **Pod disruption budget**: минимум 2 реплики (reactor = stateless, легко scale).
+
+
+
+### 21. Архитектурный выбор в 2026 году: WebFlux vs Virtual Threads
+
+С появлением **Virtual Threads (Project Loom)** в Java 21 и их нативной поддержки в Spring Boot 3.2+, парадигма выбора сместилась.
+
+**Правило выбора на сегодня:**
+
+1. **Стандартный CRUD / REST API / Интеграции:**
+   - **Выбор**: Spring MVC + Virtual Threads (`spring.threads.virtual.enabled=true`) + JDBC (HikariCP).
+   - **Почему**: масштабируемость (тысячи одновременных запросов) с простотой синхронного кода. `ThreadLocal` (MDC, SecurityContext) работает из коробки. WebFlux здесь — overengineering.
+
+2. **Streaming API (SSE, WebSocket) / Высоконагруженный Event Processing:**
+   - **Выбор**: Spring WebFlux + Reactor + R2DBC.
+   - **Почему**: виртуальные потоки не решают проблему **backpressure**. Если клиент читает SSE-поток медленнее, чем сервер генерирует события, виртуальные потоки будут копиться в памяти → OOM. Reactor с `request(n)` — единственный способ контролировать поток данных на уровне протокола.
+
+3. **Legacy-интеграции с блокирующими вызовами:**
+   - **Выбор**: мигрировать сервис на Virtual Threads, а не писать реактивные обёртки.
+
+**Итог**: Reactor не умирает, но его область применения сузилась до **ниши потоковой обработки данных и backpressure**. Для типичных микросервисов виртуальные потоки стали новым стандартом.

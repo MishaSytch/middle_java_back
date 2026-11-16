@@ -85,6 +85,47 @@ List<String> result = names.stream()
 - **`reducing()`** — обобщённая редукция.
 
 
+
+
+**Downstream-коллекторы (вложенные коллекторы):**
+
+Методы `groupingBy` и `partitioningBy` становятся по-настоящему мощными при использовании вложенных коллекторов, которые обрабатывают элементы внутри каждой группы.
+
+```java
+List<Employee> employees = ...;
+
+// Группировка по департаменту + подсчёт суммы зарплат
+Map<String, Double> deptSalaries = employees.stream()
+    .collect(Collectors.groupingBy(
+        Employee::getDepartment,
+        Collectors.summingDouble(Employee::getSalary)
+    ));
+
+// Группировка по городу + список имён (mapping)
+Map<String, List<String>> cityNames = employees.stream()
+    .collect(Collectors.groupingBy(
+        Employee::getCity,
+        Collectors.mapping(Employee::getName, Collectors.toList())
+    ));
+
+// Разделение на совершеннолетних/несовершеннолетних + подсчёт
+Map<Boolean, Long> agePartition = employees.stream()
+    .collect(Collectors.partitioningBy(
+        e -> e.getAge() >= 18,
+        Collectors.counting()
+    ));
+
+// Группировка + сортировка в каждой группе (collectingAndThen)
+Map<String, List<String>> sortedByName = employees.stream()
+    .collect(Collectors.groupingBy(
+        Employee::getDepartment,
+        Collectors.collectingAndThen(
+            Collectors.mapping(Employee::getName, Collectors.toList()),
+            list -> { list.sort(Comparator.naturalOrder()); return list; }
+        )
+    ));
+```
+
 ### 7. Что делает операция flatMap()
 
 `flatMap(Function<T, Stream<R>>)` — промежуточная операция, которая **разворачивает** каждый элемент в отдельный стрим и затем «сплющивает» все эти стримы в один общий поток. Она полезна, когда каждый элемент порождает 0, 1 или несколько элементов результата. Пример: `streamOfLists.flatMap(List::stream)` превратит поток списков в плоский поток их элементов.
@@ -202,6 +243,9 @@ int sum3 = Arrays.stream(arr).parallel()
 - **Не все операции параллелятся эффективно**: `sorted`, `distinct`, `limit` требуют координации между потоками.
 
 
+
+- **`sorted()` и `distinct()` в параллельном стриме работают крайне неэффективно**: эти stateful-операции требуют полной буферизации всех элементов и синхронизации между потоками перед продолжением конвейера. Если в параллельном стриме есть `sorted` или `distinct` — часто быстрее выполнить последовательный стрим с сортировкой.
+
 ### 13. Что такое ForkJoinPool и как он связан с parallel streams
 
 `ForkJoinPool` — это специализированный пул потоков, реализующий алгоритм **work-stealing**: задачи рекурсивно делятся на подзадачи (`fork`), а затем их результаты объединяются (`join`). Каждый рабочий поток имеет свою очередь задач и, когда освобождается, «крадёт» задачи у других потоков, обеспечивая эффективную загрузку всех ядер.
@@ -239,7 +283,6 @@ long result = pool.invoke(new SumTask(array, 0, array.length));
 ```
 
 
-### 330 (продолжение). Что такое ForkJoinPool и как он связан с parallel streams? — ответ дан выше.
 
 
 ### 14. Можно ли изменять состояние внешних переменных в Stream операциях
@@ -383,5 +426,168 @@ Map<String, Integer> map = stream.collect(
 Пример: `stream.max(Comparator.naturalOrder()).orElse(0)` — безопасное получение максимума или значения по умолчанию.
 
 
+### 30. Что такое примитивные стримы (Primitive Streams) и зачем они нужны
 
+Java предоставляет специализированные интерфейсы для работы с примитивами: `IntStream`, `LongStream`, `DoubleStream`.
 
+**Зачем они нужны:**
+
+Главная причина — **производительность**. Использование обычного `Stream<Integer>` приводит к постоянной упаковке (boxing) и распаковке (unboxing) примитивов в объекты-обёртки, что создаёт лишнюю нагрузку на GC и тратит память.
+
+**Основные операции:**
+- `mapToInt()`, `mapToLong()`, `mapToDouble()` — преобразование объект-стрима в примитивный.
+- `boxed()` — обратное преобразование примитивного стрима в объект-стрим (`Stream<Integer>`).
+- `sum()`, `average()`, `max()`, `min()` — специфичные терминальные операции (возвращают примитив, не `Optional`).
+- `range(int startInclusive, int endExclusive)` и `rangeClosed()` — генерация последовательностей.
+
+```java
+List<User> users = List.of(new User(25), new User(30), new User(35));
+
+// Плохо: Stream<Integer> с boxing/unboxing на каждом элементе
+int sum1 = users.stream()
+    .map(User::getAge)
+    .reduce(0, Integer::sum);
+
+// Хорошо: IntStream без накладных расходов
+int sum2 = users.stream()
+    .mapToInt(User::getAge)
+    .sum();
+
+// Генерация последовательности и обратное преобразование
+List<Integer> numbers = IntStream.rangeClosed(1, 5)
+    .boxed()  // Stream<Integer>
+    .collect(Collectors.toList());
+
+// doubleStream с округлением
+double avg = users.stream()
+    .mapToInt(User::getAge)
+    .average()
+    .orElse(0.0);
+```
+
+**Компромиссы:**
+- `Stream<Integer>` — универсально (можно миксовать с объектами), но boxing/unboxing на каждом элементе.
+- `IntStream` — быстро (без boxing), но менее гибок (не все операции есть, например нет `distinct` до Java 8, `sorted` ограничен).
+- Для больших коллекций примитивов (миллионы элементов) `IntStream` даёт измеримый выигрыш по памяти и скорости.
+
+**Лучшая практика:**
+- Для арифметических операций по примитивам — всегда `mapToInt`/`mapToLong` + `sum`/`average`.
+- Для генерации последовательностей — `IntStream.range`/`rangeClosed`.
+- Для смешанных операций (объекты + примитивы) — `Stream` + `boxed` только где нужно.
+
+**Вопросы интервьюера:**
+- «Зачем `boxed()`?» — чтобы вернуть в объектный стрим для операций, которые есть только в `Stream` (например, `map` на объект).
+- «В чём разница `sum()` в `IntStream` и `reduce(0, Integer::sum)` в `Stream<Integer>`?» — `IntStream.sum()` возвращает `int` (примитив), `reduce` возвращает `Integer` (объект, boxing).
+
+### 31. Как реализовать собственный Collector
+
+Интерфейс `Collector<T, A, R>` состоит из 4-х основных компонентов (и опционального 5-го — `characteristics`):
+
+1. **`supplier()`** — создаёт пустой изменяемый контейнер для накопления (например, `ArrayList::new`).
+2. **`accumulator()`** — функция, добавляющая элемент стрима в контейнер.
+3. **`combiner()`** — функция для объединения двух контейнеров (критично для `parallelStream`).
+4. **`finisher()`** — финальное преобразование контейнера в итоговый результат (например, создание `unmodifiableList`).
+
+**Пример: сборка в неизменяемый список (аналог `Collectors.toUnmodifiableList()` из Java 10):**
+
+```java
+public static <T> Collector<T, ?, List<T>> toImmutableList() {
+    return Collector.of(
+        ArrayList::new,                   // supplier
+        List::add,                        // accumulator
+        (left, right) -> {                // combiner
+            left.addAll(right);
+            return left;
+        },
+        Collections::unmodifiableList     // finisher
+    );
+}
+
+// Использование:
+List<String> result = stream.collect(toImmutableList());
+```
+
+**Пример: кастомный `joining` с ограничением длины:**
+
+```java
+public static Collector<CharSequence, ?, String> joiningLimited(String delimiter, int maxLen) {
+    return Collector.of(
+        () -> new StringBuilder(),
+        (sb, seq) -> {
+            if (sb.length() > 0) sb.append(delimiter);
+            sb.append(seq);
+        },
+        (left, right) -> {
+            if (right.length() > 0) {
+                if (left.length() > 0) left.append(delimiter);
+                left.append(right);
+            }
+            return left;
+        },
+        sb -> sb.length() > maxLen ? sb.substring(0, maxLen) + "..." : sb.toString()
+    );
+}
+```
+
+Знание этого механизма показывает глубокое понимание того, как работают `collect`, `reduce` и параллельная обработка под капотом.
+
+**Компромиссы:**
+- Встроенные коллекторы (`Collectors.toList()`, `groupingBy`) — проще, но менее гибки.
+- Кастомный коллектор — полная гибкость, но сложнее писать и отлаживать.
+- Для параллельных стримов `combiner` — критичен: без него результат будет неверным.
+
+**Лучшая практика:**
+- Сначала проверить, покрывает ли задача встроенные коллекторы.
+- Если нет — использовать `Collector.of()` с 4 компонентами.
+- Для параллельных стримов обязательно проверять, что `combiner` корректно объединяет частичные результаты.
+
+**Вопросы интервьюера:**
+- «Почему `combiner` важен только для параллельных стримов?» — в последовательном стриме один контейнер обрабатывает все элементы, а в параллельном — каждый поток имеет свой контейнер, и их нужно объединить.
+- «Можно ли пропустить `finisher`?» — да, если контейнер уже является итоговым результатом (например, `ArrayList` без `unmodifiableList`).
+
+### 32. Новые возможности Stream API в Java 9 и новее
+
+- **`Stream.ofNullable(T t)`** (Java 9): создаёт стрим из одного элемента, если он не `null`, или пустой стрим, если `null`. Идеально заменяет громоздкие `if (obj != null) obj.stream() : Stream.empty()`.
+- **`takeWhile(Predicate)`** (Java 9): принимает элементы, пока предикат истинен, затем **останавливает** стрим. Продвинутый short-circuiting для упорядоченных стримов.
+- **`dropWhile(Predicate)`** (Java 9): отбрасывает элементы, пока предикат истинен, а затем возвращает все остальные (включая те, что не удовлетворяют предикату).
+- **`iterate(seed, hasNext, next)`** (Java 9): перегруженная версия `iterate`, позволяющая задать условие остановки. Безопасная альтернатива бесконечным стримам с `limit`.
+- **`Stream.toUnmodifiableList()`** (Java 10+): терминальная операция, возвращающая `List` без создания промежуточного `ArrayList`.
+- **`Stream.toList()`** (Java 16+): аналог `toUnmodifiableList()`, но как метод `Stream`.
+
+```java
+// ofNullable: безопасно обрабатываем потенциально null-поле
+List<String> tags = user.getTags().stream()
+    .flatMap(tag -> Stream.ofNullable(tag.getName()))
+    .collect(Collectors.toList());
+
+// takeWhile: берём элементы, пока они меньше 5 (для упорядоченного стрима)
+List<Integer> smallNumbers = Stream.of(1, 2, 3, 6, 7, 2)
+    .takeWhile(n -> n < 5)
+    .collect(Collectors.toList());  // [1, 2, 3] — останавливается на 6
+
+// dropWhile: отбрасываем, пока меньше 5, затем возвращаем всё
+List<Integer> rest = Stream.of(1, 2, 3, 6, 7, 2)
+    .dropWhile(n -> n < 5)
+    .collect(Collectors.toList());  // [6, 7, 2] — отбрасывает 1,2,3
+
+// iterate с условием остановки
+List<Integer> powers = Stream.iterate(
+        1,
+        n -> n <= 1024,
+        n -> n * 2
+    ).collect(Collectors.toList());  // [1, 2, 4, 8, ..., 1024]
+```
+
+**Компромиссы:**
+- `takeWhile` против `filter`: `takeWhile` останавливает стрим на первом несовпадении (short-circuit), `filter` проходит все элементы. Для упорядоченных стримов `takeWhile` быстрее.
+- `dropWhile` против `filter`: `dropWhile` отбрасывает только «преамбулу» (пока предикат истинен), затем возвращает всё. `filter` отбрасывает все несовпадения.
+- `iterate` с условием (Java 9) против `iterate` + `limit`: первый безопаснее (не нужно считать длину заранее).
+
+**Лучшая практика:**
+- `ofNullable` вместо `if (x != null)` перед `.stream()`.
+- `takeWhile` для упорядоченных стримов вместо `filter` (short-circuit).
+- `iterate` с условием остановки для конечных последовательностей.
+
+**Вопросы интервьюера:**
+- «В чём разница `takeWhile` и `filter`?» — `takeWhile` останавливается на первом `false`, `filter` проходит все элементы. `takeWhile` — short-circuit.
+- «Зачем `ofNullable`?» — чтобы не писать `if (obj != null) obj.stream() : Stream.empty()`.

@@ -104,6 +104,23 @@ CompletableFuture<Integer> orderCount =
 
 По умолчанию методы с суффиксом `Async` (например, `thenApplyAsync`, `supplyAsync`) используют общий пул `ForkJoinPool.commonPool()`. Его размер по умолчанию равен количеству доступных процессоров минус один, и он оптимизирован для коротких задач, интенсивно использующих CPU.
 
+
+
+**Критическая опасность:**
+
+Этот пул предназначен **только для коротких, неблокирующих, CPU-bound задач** (сложные вычисления, обработка данных в памяти). Если выполнить в нём блокирующую I/O-операцию (HTTP-вызов в микросервис, запрос к БД, `Thread.sleep`), поток будет заблокирован. Если таких запросов станет больше, чем ядер CPU, пул исчерпается (**thread starvation**). Поскольку этот пул **глобальный для всей JVM**, это приведёт к деградации или полному отказу всех остальных компонентов приложения, использующих `CompletableFuture` или `parallelStream`.
+
+```java
+// ПЛОХО: блокируем общий пул, рискуем положить всё приложение
+CompletableFuture.supplyAsync(() -> httpClient.get(url));
+
+// ХОРОШО: используем изолированный пул для I/O
+ExecutorService ioExecutor = Executors.newFixedThreadPool(50);
+CompletableFuture.supplyAsync(() -> httpClient.get(url), ioExecutor);
+```
+
+**Решение:** для I/O-bound задач **всегда** передавать собственный `Executor` (например, `ThreadPoolExecutor` с отдельной очередью и лимитами, или виртуальные потоки в Java 21).
+
 ### 13. Как указать свой Executor для CompletableFuture?
 
 Вы можете передать свой `Executor` в качестве дополнительного аргумента в методы, которые создают или асинхронно обрабатывают `CompletableFuture`. Например:
@@ -113,6 +130,27 @@ CompletableFuture.supplyAsync(() -> "task", customExecutor);
 future.thenApplyAsync(result -> result + " processed", customExecutor);
 ```
 Это позволяет использовать собственный пул потоков, настроенный под конкретные задачи (например, для операций ввода-вывода).
+
+
+
+**Интеграция с Virtual Threads (Java 21):**
+
+С появлением виртуальных потоков (Project Loom) подход к асинхронности в Java изменился. Теперь вместо сложного построения цепочек `CompletableFuture` для избежания блокировок, можно просто выполнить блокирующий код внутри виртуального потока.
+
+```java
+// Создаём executor, который порождает новый виртуальный поток на каждую задачу
+Executor virtualThreadExecutor = Executors.newVirtualThreadPerTaskExecutor();
+
+CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> {
+    // Блокирующий вызов (JDBC или HTTP),
+    // но он НЕ блокирует carrier (OS) поток, а только дешёвый виртуальный поток.
+    return httpClient.get("https://api.example.com/data");
+}, virtualThreadExecutor);
+
+future.thenAccept(result -> System.out.println(result));
+```
+
+**Компромисс:** для простых I/O-задач в Java 21+ связка `CompletableFuture` + Virtual Threads часто предпочтительнее сложного реактивного стека (WebFlux/Project Reactor), так как сохраняет простоту императивного кода, но даёт масштабируемость, сравнимую с асинхронным NIO.
 
 ### 14. Что такое блокирующий код и как его отличить от неблокирующего?
 
@@ -198,6 +236,19 @@ CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> longRunni
 - **`get()`**: Объявлен в интерфейсе `Future` и может выбрасывать проверяемые исключения `InterruptedException` и `ExecutionException`.
 - **`join()`**: Объявлен в `CompletableFuture` и не выбрасывает проверяемых исключений. Если `CompletableFuture` завершился исключительно, `join()` выбрасывает непроверяемое исключение `CompletionException`.
 
+**Важный нюанс:** `join()` (и `get()`) заворачивают исходное исключение в `CompletionException` (или `ExecutionException`). При обработке ошибок нужно извлекать реальную причину через `getCause()`:
+
+```java
+try {
+    future.join();
+} catch (CompletionException e) {
+    Throwable cause = e.getCause();  // реальное исключение (например, TimeoutException)
+    if (cause instanceof TimeoutException) {
+        // обработка таймаута
+    }
+}
+```
+
 ### 27. Можно ли вручную завершить CompletableFuture результатом?
 
 Да, это одна из ключевых возможностей `CompletableFuture`. Вы можете создать "пустой" `CompletableFuture` с помощью `new CompletableFuture<>()` и позже завершить его из любого потока, вызвав метод `complete(T value)` для успешного завершения или `completeExceptionally(Throwable ex)` для завершения с ошибкой.
@@ -224,3 +275,65 @@ public static <T> CompletableFuture<T> retry(Supplier<CompletableFuture<T>> oper
 Этот код при ошибке рекурсивно создает новый `CompletableFuture` для повторной попытки, пока не исчерпаются `retries`.
 
 
+**Продакшн-решение (Resilience4j):**
+
+В реальных high-load системах самописная рекурсия для retry не используется из-за риска переполнения стека и отсутствия контроля над нагрузкой. Вместо этого применяется **Resilience4j**:
+
+```java
+RetryConfig retryConfig = RetryConfig.<String>custom()
+    .maxAttempts(3)
+    .waitDuration(Duration.ofMillis(500))
+    .enableExponentialBackoff(true)
+    .retryExceptions(TimeoutException.class, IOException.class)
+    .build();
+
+Retry retry = Retry.of("userService", retryConfig);
+
+// Декорируем асинхронную операцию
+CompletableFuture<String> future = Retry.decorateCompletionStage(
+    retry,
+    () -> CompletableFuture.supplyAsync(() -> callExternalService(), ioExecutor)
+);
+```
+
+Это даёт гарантированный exponential backoff, jitter и автоматическую интеграцию с метриками (Micrometer), что критично для предотвращения каскадных сбоев.
+
+**Компромиссы:**
+- Самописный retry (рекурсия) — просто, без зависимостей, но нет backoff, нет метрик, риск StackOverflow.
+- Resilience4j `@Retry` / `decorateCompletionStage` — exponential backoff, jitter, метрики, circuit breaker, но зависимость.
+
+**Лучшая практика:**
+- Для high-load систем — всегда Resilience4j (или аналог) для retry.
+- Настроить `maxAttempts`, `waitDuration`, `exponentialBackoff`, `jitter`.
+- Интегрировать с Micrometer для мониторинга (счётчик retry, длительность ожидания).
+
+
+
+### 29. Почему в публичных API лучше возвращать CompletionStage, а не CompletableFuture?
+
+При проектировании методов, которые возвращают асинхронный результат, хорошей практикой считается указание в сигнатуре интерфейса **`CompletionStage<T>`**, а не его реализации `CompletableFuture<T>`.
+
+```java
+// Хорошо: инкапсуляция, вызывающий код не может вручную завершить или отменить фьючерс
+public CompletionStage<UserData> fetchUserDataAsync(String userId) {
+    return CompletableFuture.supplyAsync(() -> db.findById(userId), ioExecutor);
+}
+
+// Плохо: вызывающий код может сделать ((CompletableFuture) result).complete(...)
+public CompletableFuture<UserData> fetchUserDataAsync(String userId) { ... }
+```
+
+**Почему это важно:** `CompletionStage` — это интерфейс только для чтения и композиции (цепочки `thenApply` и т.д.). Он не содержит методов `complete()`, `completeExceptionally()` или `cancel()`. Это защищает внутреннюю логику сервиса от некорректного вмешательства извне и соответствует принципу инкапсуляции.
+
+**Компромиссы:**
+- `CompletionStage` — инкапсуляция, безопасность, но нет доступа к специфичным методам `CompletableFuture` (`orTimeout`, `completeOnTimeout`).
+- `CompletableFuture` — полный доступ ко всем методам, но вызывающий код может испортить состояние фьючерса.
+
+**Лучшая практика:**
+- Публичные API — всегда `CompletionStage<T>`.
+- Внутренние методы (private/package) — можно `CompletableFuture<T>`.
+- Если нужен `orTimeout` — применять его внутри метода, до возврата `CompletionStage`.
+
+**Вопросы интервьюера:**
+- «А если вызывающему коду нужен `orTimeout`?» — применять таймаут на стороне вызывающего: `stage.toCompletableFuture().orTimeout(...)`.
+- «А если нужен `cancel()`?» — проектировать метод так, чтобы отмена была невозможна или использовать отдельный `CancellationToken`.
