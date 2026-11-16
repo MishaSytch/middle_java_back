@@ -354,6 +354,17 @@ assertEquals(0, mockList.size());       // дефолт для int
 - **`@InjectMocks`** — Mockito создаст экземпляр тестируемого класса и внедрит в него моки/spy: сначала пробует **конструктор** с наибольшим числом аргументов, затем setter-инъекцию, затем field-инъекцию. Незаполненные зависимости останутся `null` — это частая причина NPE в тестах.
 - **`@ExtendWith(MockitoExtension.class)`** — расширение JUnit 5, которое инициализирует аннотированные поля перед каждым тестом (в JUnit 4 был `MockitoAnnotations.openMocks(this)` или `@RunWith(MockitoJUnitRunner.class)`). Также строго следит за неиспользованными заглушками: лишний `when(...)` без последующего вызова уронит тест (`UnnecessaryStubbingException`) — это хорошо, поддерживает тесты в чистоте.
 
+> **Lenient stubbing:** если в `@BeforeEach` настраиваете мок, который используется не во всех тестах класса, избегайте `UnnecessaryStubbingException` двумя способами:
+> ```java
+> // 1. На уровне класса:
+> @MockitoSettings(strictness = Strictness.LENIENT)
+> @ExtendWith(MockitoExtension.class)
+> class MyTest { ... }
+>
+> // 2. Для конкретного вызова:
+> lenient().when(clock.now()).thenReturn(FIXED_TIME);
+> ```
+
 ```java
 @ExtendWith(MockitoExtension.class)
 class CheckoutServiceTest {
@@ -495,7 +506,32 @@ class UserRepositoryIT {
 }
 ```
 
-Ключевые практики: singleton-контейнер на весь прогон (`static` + переиспользование), `@DynamicPropertySource` для передачи URL в Spring, ready-check (`waitingFor(Wait.forListeningPort())`). Альтернатива с Spring Boot 3.1+: `@ServiceConnection` — автоконфигурация DataSource по аннотированному контейнеру без ручных свойств.
+**Современный подход (Spring Boot 3.1+): `@ServiceConnection`**
+Вместо ручного `@DynamicPropertySource`, Spring Boot автоматически настраивает DataSource/Redis/Kafka по аннотированному контейнеру:
+
+```java
+@SpringBootTest
+@Testcontainers
+class UserRepositoryIT {
+
+    @Container
+    @ServiceConnection // автоконфигурация DataSource (URL, user, password)
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+
+    @Autowired UserRepository repo;
+
+    @Test void savesUser() {
+        repo.save(new UserEntity("Anna"));
+        assertThat(repo.findByName("Anna")).isPresent();
+    }
+}
+```
+
+**Лучшие практики:**
+1. **`withReuse(true)`** — локально контейнер не удаляется между запусками (экономит 30-60 сек). Включить `testcontainers.reuse.enable=true` в `~/.testcontainers.properties`. В CI — выключить (изолированность).
+2. **Специализированные модули** — `KafkaContainer`, `RedisContainer`, `PostgreSQLContainer` вместо `GenericContainer`: встроенные wait strategies + удобные методы (`getBootstrapServers()`, `getRedisURI()`).
+3. **Инициализация схемы** — `.withInitScript("schema.sql")` или Flyway/Liquibase в контейнере.
+4. **Singleton-контейнер** — `static` + один контейнер на весь прогон тестов, не на каждый тест.
 
 ### 21. Какие срезы тестов есть в Spring Boot (@SpringBootTest, @WebMvcTest, @DataJpaTest, @JsonTest)
 
@@ -602,4 +638,207 @@ class UserControllerTest {
 ```
 
 **Покрытие кода** измеряет, какие строки/ветки исполнились в тестах. Инструмент в Java-экосистеме — **JaCoCo** (maven/gradle-плагин, отчёт HTML/XML, гейты в CI). Метрики: line, branch, instruction coverage. Важно понимать: **покрытие — индикатор непротестированного кода, а не качества тестов**. 100% строк может означать тесты без ассертов; 70% с сильными ассертами на бизнес-логике ценнее, чем 95% формальных. Разумная практика: требовать высокий порог на новом коде (diff coverage) и не гнаться за общими 100%.
+
+
+### 25. Как тестировать взаимодействие с внешними REST-сервисами (WireMock)
+
+Поднимать реальный внешний сервис или его аналог в Testcontainers для простых HTTP-вызовов — избыточно. Стандарт индустрии — **WireMock**. Он поднимает легковесный HTTP-сервер, который отвечает заранее заданными ответами (stubbing) и запоминает все полученные запросы (verification).
+
+```java
+@ExtendWith(WireMockExtension.class)
+@WireMockTest(httpPort = 8089)
+class ExternalPaymentClientTest {
+
+    @Autowired ExternalPaymentClient client; // внутри использует RestClient/WebClient на localhost:8089
+
+    @Test
+    void shouldChargeSuccessfully() {
+        // 1. Stubbing: настраиваем ожидаемый ответ
+        stubFor(post(urlEqualTo("/api/charge"))
+            .withRequestBody(matchingJsonPath("$.amount", equalTo("100")))
+            .willReturn(aResponse()
+                .withStatus(200)
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"status\": \"SUCCESS\"}")));
+
+        // 2. Action: выполняем тестируемый код
+        PaymentResult result = client.charge(100L);
+
+        // 3. Verification: проверяем, что запрос был отправлен корректно
+        verify(postRequestedFor(urlEqualTo("/api/charge"))
+            .withHeader("Authorization", matching("Bearer .*")));
+
+        assertThat(result.isSuccess()).isTrue();
+    }
+}
+```
+
+**Trade-offs:** WireMock идеален для контрактов и проверки форматов запросов. Но он не проверяет реальную сетевую совместимость (таймауты, специфичные SSL-ошибки) — для этого нужен реальный сервис или Testcontainers.
+
+
+### 26. AssertJ: стандарт ассертов в современной Java
+
+В крупных компаниях **AssertJ** — де-факто стандарт благодаря fluent API и читаемым сообщениям об ошибках.
+
+```java
+// JUnit 5 (порядок аргументов путают, при ошибке непонятно что было expected/actual)
+assertEquals(expected, actual, "message");
+
+// AssertJ (читается как текст, умные diff-сообщения)
+assertThat(user.getName()).isEqualTo("Anna");
+assertThat(orders).hasSize(3)
+    .extracting("status")
+    .containsExactly("PAID", "SHIPPED", "PAID");
+assertThat(orders)
+    .filteredOn("total", greaterThan(1000))
+    .extracting("id")
+    .containsOnly(1L, 3L);
+
+// Исключения
+assertThatThrownBy(() -> service.doIt())
+    .isInstanceOf(IllegalArgumentException.class)
+    .hasMessage("id must be positive")
+    .hasFieldOrPropertyWithValue("id", 42);
+
+// Коллекции + Optional
+assertThat(optionalUser).isPresent()
+    .filter(u -> u.isActive())
+    .map(User::getEmail)
+    .contains("anna@x.io");
+
+// Soft assertions (аналог assertAll)
+SoftAssertions.assertSoftly(s -> {
+    s.assertThat(dto.name()).isEqualTo("Ivan");
+    s.assertThat(dto.email()).isEqualTo("ivan@x.io"); // упадёт, но продолжится
+    s.assertThat(dto.age()).isEqualTo(30);
+});
+```
+
+**Зачем:** при падении AssertJ показывает **diff** (что ожидалось vs что было), а не просто `expected: X but was: Y`. Для сложных объектов это экономит минуты на отладке.
+
+
+### 27. Управление тестовыми данными в БД
+
+**1. `@Sql` — загрузка данных из скрипта:**
+```java
+@DataJpaTest
+@Sql(scripts = "/test-data.sql", executionPhase = SqlExecutionPhase.BEFORE_TEST_METHOD)
+class OrderRepositoryIT {
+
+    @Test void findsOrderByStatus(@Autowired OrderRepository repo) {
+        // test-data.sql: INSERT INTO orders (id, status, total) VALUES (1, 'NEW', 100);
+        List<Order> orders = repo.findByStatus("NEW");
+        assertThat(orders).hasSize(1);
+    }
+}
+```
+
+**2. Test Data Builders (паттерн) / Instancio:**
+```java
+// Ручной builder
+public class UserBuilder {
+    private String name = "default";
+    private String email = "test@x.io";
+
+    public UserBuilder name(String n) { this.name = n; return this; }
+    public UserBuilder email(String e) { this.email = e; return this; }
+    public User build() { return new User(name, email); }
+}
+
+// Использование:
+User user = new UserBuilder().name("Anna").build(); // email по умолчанию
+
+// Instancio (автоматическая генерация валидных объектов)
+User randomUser = Instancio.create(User.class);
+User partialUser = Instancio.of(User.class)
+    .set(field(User::getName), "Anna")
+    .create();
+```
+
+**Зачем:** `new User("name", "email", 1, 2, 3, 4, 5)` — хрупко и нечитабельно. Builders и Instancio генерируют **валидные** объекты с правильными полями, а тест меняет только то, что нужно.
+
+
+### 28. Тестирование Kafka-потребителя с Testcontainers
+
+```java
+@SpringBootTest
+@Testcontainers
+class OrderConsumerIT {
+
+    @Container
+    static KafkaContainer kafka = new KafkaContainer(DockerImageName.parse("confluentinc/cp-kafka:7.6.0"))
+        .withReuse(true); // локально: не пересоздавать между запусками
+
+    @DynamicPropertySource
+    static void kafkaProps(DynamicPropertyRegistry r) {
+        r.add("spring.kafka.bootstrap-servers", kafka::getBootstrapServers);
+    }
+
+    @Autowired KafkaTemplate<String, OrderEvent> kafkaTemplate;
+
+    @Autowired
+    ApplicationRunner runner; // или @KafkaListener
+
+    @Test
+    void shouldConsumeAndPersist(@Autowired OrderRepository repo) throws Exception {
+        OrderEvent event = new OrderEvent(42L, "PAID");
+        kafkaTemplate.send("orders.topic", event).get();
+
+        // Ждём асинхронную обработку
+        await().atMost(Duration.ofSeconds(10))
+               .untilAsserted(() ->
+                   assertThat(repo.findById(42L))
+                       .map(Order::getStatus)
+                       .contains("PAID"));
+    }
+}
+```
+
+**Trade-offs:** Testcontainers Kafka — надёжнее `EmbeddedKafka` (нет race condition с ZooKeeper), но медленнее (30-60 сек на старте). Для локальной разработки `withReuse(true)` экономит минуты.
+
+
+### 29. Common Pitfalls: частые ошибки в тестировании
+
+| # | Ошибка | Последствие | Решение |
+|---|--------|-------------|---------|
+| 1 | **`Thread.sleep()` вместо Awaitility** | Медленные, хрупкие тесты (на CI не хватает времени) | `Awaitility.await().untilAsserted(...)` или `verify(mock, timeout(500))` |
+| 2 | **Избыточный `verify`** | Тесты ломаются при любом рефакторинге (проверка реализации, а не поведения) | Проверяйте результат (state-based); `verify` только для побочных эффектов |
+| 3 | **`@MockBean` замедляет прогон** | Каждое уникальное `@MockBean` создаёт **новый** ApplicationContext | Выносить в отдельные классы или чистый `@Mock` без Spring-контекста |
+| 4 | **Тестирование приватных методов** | Тесты хрупкие, приватный API меняется → тесты падают | Проверяйте через публичный API; если метод сложный — вынесите в отдельный класс |
+| 5 | **Зависимость тестов друг от друга** | Порядок выполнения меняет результат | `@TestInstance(PER_METHOD)` (по умолчанию), `@Transactional` rollback, `@DirtiesContext` |
+| 6 | **Статические моки без закрытия** | `MockedStatic` "протекает" в другие тесты | Всегда try-with-resources: `try (MockedStatic<X> m = mockStatic(X.class))` |
+| 7 | **Тесты без ассертов** | Coverage растёт, но ничего не проверяется | Каждый `@Test` минимум один `assert*` или `verify` |
+| 8 | **Hardcoded ports/paths в тестах** | Конфликты при параллельном запуске | Testcontainers (динамические порты), `@LocalServerPort`, `@TempDir` |
+
+
+### 30. Mutation Testing (Pitest)
+
+**Идея:** тесты хороши не когда код покрыт, а когда они **падают** при внесении мутаций (маленьких ошибок) в код.
+
+**Pitest** — Java-инструмент мутационного тестирования:
+1. Вносит "мутанты" в код: `+` → `-`, `>` → `<=`, `return x` → `return null`, удаление `if`, инверсия условий.
+2. Запускает тесты против каждого мутанта.
+3. Если тест **падает** → мутант **убит** (хорошо). Если проходит → мутант **выжил** (тесты слабые).
+
+```xml
+<!-- PIT Maven plugin -->
+<plugin>
+    <groupId>org.pitest</groupId>
+    <artifactId>pitest-maven</artifactId>
+    <version>1.15.0</version>
+    <configuration>
+        <targetCoverage>80</targetCoverage>
+        <mutators>
+            <mutator>DEFAULTS</mutator>
+        </mutators>
+    </configuration>
+</plugin>
+```
+
+**Mutation Score** = убитые мутанты / все мутанты × 100%.
+- **>90%**: сильные тесты, хороший уровень.
+- **70-90%**: приемлемо, но есть слабые места.
+- **<70%**: тесты покрывают строки, но не проверяют логику.
+
+**Когда использовать:** для критичной бизнес-логики (расчёты, валидаторы, алгоритмы). Не для glue-кода (конфиги, маппинги). Запуск медленный (минуты), поэтому в CI — на ночном прогоне или только для `src/main` ключевых пакетов.
 

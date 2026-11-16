@@ -10,6 +10,14 @@
 - **`@BatchSize`** или **batch fetching**: Hibernate загружает связанные сущности не по одной, а пакетами по указанному размеру, сокращая общее количество запросов.
 - **DTO-проекции**: для read-only сценариев лучше сразу выбирать только нужные поля в DTO, избегая загрузки полных сущностей и их связей.
 
+> ⚠️ **Опасность JOIN FETCH с несколькими коллекциями (Декартово произведение):**
+> Если в одном запросе сделать `JOIN FETCH` для двух коллекций `@OneToMany` одновременно, SQL-запрос вернёт **декартово произведение** строк. Например: `User` с 10 ролями и 100 заказов → `JOIN FETCH u.roles JOIN FETCH u.orders` вернёт **1000 строк** (10 × 100). Hibernate дедуплицирует сущности в L1-кэше, но объём данных из БД всё равно раздут.
+>
+> **Решения:**
+> 1. Загружать коллекции **по отдельности**: `JOIN FETCH` для одной + `@BatchSize` или отдельный запрос для второй.
+> 2. Использовать `@EntityGraph` для одной коллекции, а вторую грузить через `@BatchSize`.
+> 3. В редких случаях — `SELECT DISTINCT` в JPQL, но это не решает проблему объёма данных из БД (только количество строк в результате).
+
 
 ### 2. В чём разница между Lazy и Eager загрузкой
 
@@ -89,6 +97,11 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 
 Аннотацию можно ставить на класс сущности (для пакетной загрузки прокси этой сущности) или на поле коллекции.
 
+> **Важные нюансы:**
+> - `@BatchSize` работает **только для неинциализированных прокси или коллекций**. Если сущность уже загружена в L1-кэш (Persistence Context), batch fetching для неё не сработает.
+> - Вместо расстановки аннотации на каждой сущности можно задать **глобальный размер** batch fetch: `spring.jpa.properties.hibernate.default_batch_fetch_size = 20`. Тогда все ленивые ассоциации без явного `@BatchSize` будут грузиться пакетами по 20.
+> - `@BatchSize` хорошо сочетается с `JOIN FETCH`: одна коллекция грузится через JOIN FETCH, вторая — через batch fetch.
+
 
 ### 7. Опишите жизненный цикл Entity в Hibernate
 
@@ -139,10 +152,41 @@ stateDiagram-v2
 3. **Пометить сущности**, которые должны кэшироваться, аннотацией `@Cache` (из `org.hibernate.annotations`), указав стратегию конкурентного доступа (`CacheConcurrencyStrategy`), например `READ_ONLY`, `READ_WRITE`, `NONSTRICT_READ_WRITE` или `TRANSACTIONAL`.
 4. При необходимости настроить **кэш запросов** (`hibernate.cache.use_query_cache = true`) для кэширования результатов конкретных запросов.
 
+> **Query Cache — главная ловушка:**
+> Query Cache кэширует **только идентификаторы (ID)** сущностей, а не сами объекты. Чтобы получить данные по ID, Hibernate всё равно обращается к L2-кэшу (или к БД, если там нет). Поэтому Query Cache **имеет смысл только в паре с включённым L2-кэшем**. Без L2-кэша Query Cache просто сэкономит один `SELECT ... WHERE id IN (...)`, но не избавит от чтения самих сущностей.
+>
+> Чтобы запрос участвовал в Query Cache, нужно явно указать:
+> ```java
+> @Query("FROM User u WHERE u.active = true")
+> @Cacheable  // Spring Data JPA аннотация
+> List<User> findActiveUsers();
+> ```
+> Или через `Query.setCacheable(true)` в EntityManager API.
+
 
 ### 12. Что такое dirty checking в Hibernate
 
 Dirty checking — это механизм Hibernate, который **автоматически обнаруживает изменения** в управляемых (persistent) сущностях. При загрузке сущности Hibernate сохраняет снимок её состояния. При flush он сравнивает текущее состояние каждого управляемого объекта со снимком. Если обнаружены изменения, Hibernate генерирует и выполняет соответствующие `UPDATE` (или `INSERT`/`DELETE`) запросы, даже если вы явно не вызывали `save()` или `update()`.
+
+> **Оптимизация UPDATE: `@DynamicUpdate` и `@DynamicInsert`:**
+> По умолчанию Hibernate генерирует `UPDATE` для **всех полей** сущности, даже если изменилось одно. Для широких таблиц (50+ колонок) это лишний сетевой трафик, нагрузка на БД и триггеры.
+>
+> ```java
+> @Entity
+> @DynamicUpdate  // UPDATE только изменившихся колонок
+> @DynamicInsert  // INSERT только непустых полей
+> public class WideEntity {
+>     @Id private Long id;
+>     private String name;
+>     private String description;
+>     // ... 40+ полей
+> }
+> ```
+>
+> - **`@DynamicUpdate`**: при flush Hibernate включает в `SET` только те колонки, которые реально изменились. SQL строится динамически.
+> - **`@DynamicInsert`**: при `INSERT` Hibernate включает только непустые поля (не передаёт NULL-значения).
+>
+> **Trade-off:** небольшой оверхед при генерации SQL (анализ изменённых полей), но выигрыш в runtime значительный для широких таблиц. Для узких сущностей (5–10 полей) разница минимальна.
 
 
 ### 13. Как работает механизм flush в Hibernate
@@ -204,13 +248,17 @@ public class Account {
 
 ### 18. Как реализовать пессимистичную блокировку в JPA
 
-Пессимистичная блокировка явно **блокирует** запись в базе данных на время транзакции, предотвращая её изменение другими транзакциями. В JPA это делается через `EntityManager.find()` или `Query` с параметром `LockModeType`, например `LockModeType.PESSIMISTIC_WRITE` (обычно транслируется в `SELECT ... FOR UPDATE`). Другие транзакции, пытающиеся изменить или заблокировать эту же запись, будут ждать освобождения блокировки. Это стратегия выбора при высокой конкуренции за одни и те же данные.
+Пессимистичная блокировка явно **блокирует** запись в базе данных на время транзакции, предотвращая её изменение другими транзакциями. В JPA это делается через `EntityManager.find()` или `Query` с параметром `LockModeType`.
+
+**Виды пессимистичных блокировок:**
+- **`PESSIMISTIC_WRITE`** → `SELECT ... FOR UPDATE`: эксклюзивная блокировка. Другие транзакции **не могут** ни читать (в режиме блокировки), ни писать эту запись.
+- **`PESSIMISTIC_READ`** → `SELECT ... FOR SHARE` (в PostgreSQL) / `FOR READ` (в MySQL): разделяющая блокировка. Другие транзакции **могут читать**, но **не могут писать** (получают `FOR UPDATE` — заблокируются). Полезно для сценариев, где нужно гарантировать, что данные не изменятся, но не блокировать другие читающие потоки.
 
 ```java
 // Пессимистичная блокировка через EntityManager
 @Transactional
 public void transferFunds(Long fromId, Long toId, BigDecimal amount) {
-    // Блокируем обе записи на время транзакции
+    // Эксклюзивная блокировка: никто не может читать/писать эти записи
     Account from = em.find(Account.class, fromId, LockModeType.PESSIMISTIC_WRITE);
     Account to = em.find(Account.class, toId, LockModeType.PESSIMISTIC_WRITE);
 
@@ -223,7 +271,19 @@ public void transferFunds(Long fromId, Long toId, BigDecimal amount) {
 
     // При commit блокировки будут освобождены
 }
+
+// Разделяющая блокировка: другие могут читать, но не писать
+@Transactional(readOnly = true)
+public Account getAccountForInspection(Long id) {
+    // Гарантируем, что данные не изменятся во время "инспекции",
+    // но не блокируем другие читающие транзакции
+    return em.find(Account.class, id, LockModeType.PESSIMISTIC_READ);
+}
 ```
+
+**Когда какой использовать:**
+- `PESSIMISTIC_WRITE` — высокая конкуренция на запись, критичные данные (балансы, остатки).
+- `PESSIMISTIC_READ` — нужно "заморозить" данные на время чтения (отчёты, валидация), но не блокировать другие readers.
 
 
 ### 19. Что такое @Version и зачем она нужна
@@ -311,7 +371,22 @@ public void transferFunds(Long fromId, Long toId, BigDecimal amount) {
 @Query("SELECT u FROM User u JOIN FETCH u.orders WHERE u.id = :id")
 User findUserWithOrders(@Param("id") Long id);
 ```
-Этот запрос загрузит пользователя и все его заказы одним SQL-запросом (с `LEFT JOIN`), полностью устраняя проблему N+1 для данной ассоциации. Для нескольких коллекций одновременно `JOIN FETCH` может привести к декартову произведению, поэтому нужно использовать осторожно.
+Этот запрос загрузит пользователя и все его заказы одним SQL-запросом (с `LEFT JOIN`), полностью устраняя проблему N+1 для данной ассоциации.
+
+> **Декартово произведение при нескольких коллекциях:**
+> `JOIN FETCH u.roles JOIN FETCH u.orders` для User с 10 ролями и 100 заказов вернёт **1000 строк** из БД (10 × 100). Hibernate дедуплицирует объекты в L1-кэше, но объём данных из сети всё равно раздут.
+>
+> **Решения:**
+> 1. **Два запроса**: `JOIN FETCH` для одной коллекции + отдельный запрос (или `@BatchSize`) для второй.
+> 2. **`@EntityGraph`** для одной коллекции + `@BatchSize` для второй.
+> 3. **DTO-проекция**: если нужны только поля из двух коллекций, лучше написать JPQL с `JOIN` (без `FETCH`) и маппингом в DTO.
+
+**Пагинация + JOIN FETCH (классическая ошибка):**
+Комбинация `Pageable` (LIMIT/OFFSET) с `JOIN FETCH` коллекции приводит к **неверным результатам**: пагинация применяется к декартовому произведению строк, а не к корневой сущности. Например, `PageRequest.of(0, 10)` + `JOIN FETCH u.orders` вернёт 10 строк из JOIN (а не 10 пользователей).
+
+Решения:
+- Два запроса: сначала получить список ID через `Pageable`, затем загрузить сущности с `JOIN FETCH` по ID.
+- `SELECT DISTINCT` + `@QueryHints(@QueryHint(name = HINT_PASS_DISTINCT_THROUGH, value = "false"))` — но это не решает проблему объёма данных из БД.
 
 
 ### 29. Что такое projection в JPA
@@ -334,6 +409,99 @@ JPA поддерживает три стратегии наследования,
 - **`SINGLE_TABLE`**: вся иерархия классов отображается в **одну таблицу** со столбцом-дискриминатором, определяющим тип сущности. Плюс: быстрые запросы без JOIN. Минус: много NULL-колонок для полей подклассов.
 - **`JOINED`**: каждый класс иерархии имеет **свою таблицу**; общие поля хранятся в родительской таблице, специфичные — в таблицах подклассов. Для загрузки подкласса выполняется `JOIN`. Плюс: нормализованная схема. Минус: более сложные и медленные запросы.
 - **`TABLE_PER_CLASS`**: для каждого **конкретного** класса создаётся отдельная таблица, содержащая все его поля (включая унаследованные). Плюс: нет NULL-колонок. Минус: полиморфные запросы требуют `UNION` всех таблиц, что может быть неэффективно.
+
+
+### 31. Как реализовать мягкое удаление (Soft Delete)
+
+В энтерпрайзе данные редко удаляют физически (`DELETE`). Чаще используется **мягкое удаление**: запись помечается флагом `is_deleted = true`, и все запросы автоматически фильтруют "удалённые" строки.
+
+```java
+@Entity
+@SQLDelete(sql = "UPDATE documents SET is_deleted = true WHERE id = ?")
+@SQLRestriction("is_deleted = false")  // Hibernate 6+; в 5.x это @Where(clause = "is_deleted = false")
+public class Document {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    private String title;
+
+    private Boolean isDeleted = false;
+}
+```
+
+- **`@SQLDelete`**: переопределяет `DELETE` на `UPDATE ... SET is_deleted = true`. При вызове `em.remove(entity)` Hibernate выполнит не DELETE, а UPDATE.
+- **`@SQLRestriction`** (Hibernate 6) / **`@Where`** (Hibernate 5): автоматически добавляет `AND is_deleted = false` ко всем `SELECT` для этой сущности.
+
+**Альтернатива:** Spring Data JPA поддерживает soft delete через `@Where` + кастомный `@Modifying` запрос, либо через библиотеку `spring-data-jpa` с `@Query` фильтрами.
+
+**Важно:** `@SQLRestriction` не защищает от raw SQL (JDBC, DBeaver) — фильтрование работает только на уровне Hibernate/JPA.
+
+
+### 32. Как правильно логировать SQL и параметры в Hibernate
+
+`hibernate.show_sql = true` — это **зло для продакшена**: выводит SQL в stdout без параметров (только `?`), создаёт лишний I/O и засоряет логи.
+
+**Современные способы:**
+
+| Способ | Как | Когда |
+|--------|-----|-------|
+| **Log4j2/Logback + Hibernate logger** | `logging.level.org.hibernate.SQL = DEBUG` + `logging.level.org.hibernate.orm.jdbc.bind = TRACE` | Hibernate 6.3+: показывает SQL и параметры отдельно |
+| **`hibernate.jdbc.log_statement_params`** | `spring.jpa.properties.hibernate.jdbc.log_statement_params = true` | Hibernate 6.2+: встраивает параметры в SQL в логах |
+| **P6Spy** | Зависимость `p6-spring-boot-starter`, обёртка над DataSource | Любая версия Hibernate, полная видимость (SQL + params + execution time) |
+| **DataSource Proxy** | `datasource-proxy` + Spring Boot starter | Аналог P6Spy, более лёгкий |
+
+**Рекомендация для продакшена:**
+- Не включать `show_sql` никогда.
+- Для отладки — `logging.level.org.hibernate.SQL = DEBUG` (без параметров) + `logging.level.org.hibernate.orm.jdbc.bind = TRACE` (параметры).
+- Для глубокого анализа — **P6Spy** (показывает execution time каждого запроса, что критично для поиска медленных запросов).
+
+
+### 33. Как работает Hibernate Filter и когда его использовать
+
+**Hibernate Filter** — это механизм динамического фильтрации записей на уровне `Session` (похож на `@SQLRestriction`, но управляется во время выполнения).
+
+```java
+@Entity
+public class Document {
+    @Id
+    private Long id;
+
+    @Filter(name = "tenantFilter", condition = "tenant_id = :tenantId")
+    private Long tenantId;
+}
+
+// Активация фильтра в текущей сессии/транзакции:
+Session session = em.unwrap(Session.class);
+session.enableFilter("tenantFilter").setParameter("tenantId", currentTenantId);
+```
+
+**Когда использовать:**
+- **Multi-tenancy**: автоматически фильтровать записи по арендатору во всех запросах.
+- **Ролевая фильтрация**: показывать пользователю только "свои" данные.
+- **Временные условия**: например, "показывать только опубликованные" в одном сценарии, и все — в другом.
+
+**Отличие от `@SQLRestriction`:**
+- `@SQLRestriction` — статический, всегда активен.
+- Filter — динамический, включается/выключается в runtime.
+
+**Важно:** Filter работает на уровне `Session` — он не влияет на native SQL или raw JDBC.
+
+
+### 34. Связь Spring `@Transactional` и Hibernate (cross-reference)
+
+`@Transactional` на уровне Spring управляет транзакцией и **влияет на поведение Hibernate**:
+
+- **`@Transactional(readOnly = true)`**: Spring сообщает Hibernate, что транзакция read-only. Hibernate:
+  - Отключает **dirty checking** (не сравнивает снимки состояния при flush) — мощная оптимизация для методов поиска.
+  - Не выполняет `flush` перед commit (нет изменений, которые нужно сохранить).
+  - Может использовать оптимизированные стратегии загрузки (например, `SET_ONLY` в некоторых реализациях).
+
+- **`@Transactional` (write)**: Hibernate выполняет полный dirty checking при flush. Все managed-сущности сравниваются со снимками, и изменения синхронизируются с БД.
+
+- **`@Transactional(propagation = REQUIRES_NEW)`**: создаёт новую транзакцию (и новый `Persistence Context` для этой транзакции). Изменения в "родительской" транзакции не видны в новой.
+
+> **Практический совет:** всегда помечайте read-only методы как `@Transactional(readOnly = true)`. Это бесплатно (с точки зрения читаемости кода) и даёт реальный выигрыш в производительности за счёт отключения dirty checking.
 
 
 

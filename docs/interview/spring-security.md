@@ -6,12 +6,47 @@
 **Spring Security** — фреймворк аутентификации и авторизации для Spring-приложений, построенный поверх **цепочки сервлетных фильтров**. Ключевая идея: перед тем как запрос дойдёт до вашего контроллера, он проходит через упорядоченный набор фильтров (`SecurityFilterChain`), каждый из которых решает свою задачу.
 
 Основные фильтры (в порядке работы):
-1. **SecurityContextPersistenceFilter / SecurityContextHolderFilter** — загрузка контекста безопасности (кто я?) из сессии/токена;
+1. **SecurityContextHolderFilter** (Spring Security 6; ранее `SecurityContextPersistenceFilter`) — загрузка контекста безопасности (кто я?) из сессии/токена;
 2. **CorsFilter** — обработка CORS;
 3. **CsrfFilter** — проверка CSRF-токена;
 4. **UsernamePasswordAuthenticationFilter** — обработка формы логина (или кастомный фильтр для JWT);
 5. **ExceptionTranslationFilter** — превращение исключений безопасности в 401/403;
-6. **FilterSecurityInterceptor / AuthorizationFilter** — финальная проверка прав доступа.
+6. **AuthorizationFilter** (Spring Security 6; ранее `FilterSecurityInterceptor`, deprecated) — финальная проверка прав доступа через `AuthorizationManager`.
+
+> **Spring Security 6:** `FilterSecurityInterceptor` и `AccessDecisionManager` устарели (deprecated) и заменены на `AuthorizationFilter` + `AuthorizationManager`. Аналогично, `SecurityContextPersistenceFilter` (делал лишние вызовы к репозиторию сессий) заменён на `SecurityContextHolderFilter`, который просто читает контекст и не сохраняет его в `HttpSession` — идеально для stateless (JWT).
+
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#f3f4f6' } } }%%
+sequenceDiagram
+    participant R as HTTP Request
+    participant F1 as SecurityContextHolderFilter
+    participant F2 as CorsFilter
+    participant F3 as CsrfFilter
+    participant F4 as Auth Filter (JWT)
+    participant F5 as ExceptionTranslationFilter
+    participant F6 as AuthorizationFilter
+    participant C as Controller
+
+    rect rgb(245,248,255)
+    Note over R,C: 1. Context + CORS + CSRF
+    R->>F1: request arrives
+    F1->>F2: chain.doFilter
+    F2->>F3: chain.doFilter
+    end
+
+    rect rgb(255,252,240)
+    Note over F4,C: 2. Authentication
+    F3->>F4: chain.doFilter
+    F4->>F4: extract Bearer token, validate
+    F4->>F5: SecurityContext set
+    end
+
+    rect rgb(245,255,245)
+    Note over F5,C: 3. Authorization + handler
+    F5->>F6: chain.doFilter
+    F6->>C: AuthorizationManager check → dispatch
+    end
+```
 
 ```java
 @Bean
@@ -39,6 +74,39 @@ SecurityFilterChain chain(HttpSecurity http) throws Exception {
 ### 3. Как работают AuthenticationManager, ProviderManager, AuthenticationProvider и UserDetailsService
 
 Цепочка аутентификации по логину/паролю:
+
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#f3f4f6' } } }%%
+sequenceDiagram
+    participant Client
+    participant Filter as UsernamePassword<br/>AuthenticationFilter
+    participant AM as AuthenticationManager<br/>(ProviderManager)
+    participant AP as DaoAuthenticationProvider
+    participant UDS as UserDetailsService
+    participant PE as PasswordEncoder
+
+    rect rgb(245,248,255)
+    Note over Client,PE: 1. Request → AuthenticationManager
+    Client->>Filter: POST /login (login, password)
+    Filter->>AM: authenticate(UsernamePasswordToken)
+    AM->>AP: supports()? yes
+    end
+
+    rect rgb(255,252,240)
+    Note over AP,PE: 2. Load user + verify password
+    AP->>UDS: loadUserByUsername(login)
+    UDS-->>AP: UserDetails (hash, authorities)
+    AP->>PE: matches(rawPassword, hash)
+    PE-->>AP: true
+    end
+
+    rect rgb(245,255,245)
+    Note over Client,AM: 3. Success → SecurityContext
+    AP-->>AM: Authentication (principal, authorities)
+    AM-->>Filter: Authentication
+    Filter-->>Client: 200 + Session/JWT
+    end
+```
 
 1. Фильтр (например, `UsernamePasswordAuthenticationFilter`) собирает из запроса `UsernamePasswordAuthenticationToken` (login + пароль) и передаёт его **`AuthenticationManager`**.
 2. `AuthenticationManager` — интерфейс; стандартная реализация — **`ProviderManager`**, который перебирает список `AuthenticationProvider`'ов.
@@ -70,6 +138,11 @@ UserDetailsService users(UserRepository repo) {
 ### 4. Что такое SecurityContext и SecurityContextHolder
 
 **`SecurityContextHolder`** — хранилище текущего контекста безопасности: внутри — `SecurityContext` c объектом `Authentication` (кто аутентифицирован и какие authorities). Фильтры заполняют его в начале запроса, очищают в конце.
+
+**`SecurityContextHolderFilter`** (Spring Security 6, замена `SecurityContextPersistenceFilter`):
+- **Stateless (JWT)**: просто читает контекст из заголовка/токена, **не** сохраняет в `HttpSession` (нет лишних вызовов к репозиторию сессий).
+- **Stateful (cookie-session)**: загружает `SecurityContext` из сессии, при изменении — сохраняет обратно.
+- Старый `SecurityContextPersistenceFilter` делал `saveSecurityContext()` после каждого запроса (даже если не изменился) — лишняя запись в сессию/БД.
 
 Стратегия хранения (`SecurityContextHolder.MODE_*`):
 - **`MODE_THREADLOCAL`** (по умолчанию) — контекст привязан к текущему потоку: каждый HTTP-запрос обрабатывается одним потоком, поэтому контекст «виден» во всём колстеке запроса;
@@ -124,6 +197,39 @@ public class SecurityConfig {
 **JWT (JSON Web Token)** — самодостаточный подписанный токен из трёх частей Base64URL: `header.payload.signature`. Payload содержит claims (`sub` — субъект, `exp` — время жизни, `roles`). Подпись (HMAC или RSA/ECDSA) гарантирует, что токен не подделан — серверу не нужно хранить сессию.
 
 Полный цикл:
+
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#f3f4f6' } } }%%
+sequenceDiagram
+    participant C as Client
+    participant AF as JwtAuthFilter
+    participant S as SecurityContextHolder
+    participant CTRL as Controller
+
+    rect rgb(245,248,255)
+    Note over C,CTRL: 1. Login
+    C->>CTRL: POST /auth/login (login, password)
+    CTRL-->>C: 200 { access_token (15min), refresh_token (7d) }
+    end
+
+    rect rgb(255,252,240)
+    Note over C,CTRL: 2. Authenticated request
+    C->>AF: GET /api/orders (Bearer <at>)
+    AF->>AF: validate signature + exp
+    AF->>S: setAuthentication(claims)
+    AF->>CTRL: doFilter (chain continues)
+    CTRL-->>C: 200 [orders]
+    end
+
+    rect rgb(255,245,245)
+    Note over C,CTRL: 3. Token expired → refresh
+    C->>AF: GET /api/orders (Bearer <expired>)
+    AF-->>C: 401 Unauthorized
+    C->>CTRL: POST /auth/refresh (refresh_token)
+    CTRL-->>C: 200 { new_access, new_refresh }
+    end
+```
+
 1. **Логин**: клиент POST /api/auth/login {login, password} → сервер проверяет через `AuthenticationManager` → генерирует access (15 мин) и refresh (7 дней) токены, подписанные секретом.
 2. **Запросы**: клиент шлёт `Authorization: Bearer <access-token>`.
 3. **Фильтр** (`OncePerRequestFilter`) до `UsernamePasswordAuthenticationFilter`: извлекает Bearer-токен, валидирует подпись/срок, достаёт claims, строит `Authentication` и кладёт в `SecurityContextHolder`.
@@ -219,7 +325,7 @@ public class InvoiceService {
 }
 ```
 
-Тонкости: аннотации работают только через прокси (self-invocation игнорируется — та же проблема, что у `@Transactional`); для REST-контроллеров предпочтительнее URL-правила, метод-секьюрити — для доменных сервисов, где одни и те же методы вызываются из разных мест.
+Тонкости: аннотации работают только через прокси. **Self-invocation**: `this.securedMethod()` из другого метода того же класса **проигнорирует** проверку прав (прокси не участвует) — та же проблема, что у `@Transactional`. Решение: вынести в отдельный бин или `AopContext.currentProxy()` (требует `@EnableMethodSecurity` + `exposeProxy`). Для REST-контроллеров предпочтительнее URL-правила, метод-секьюрити — для доменных сервисов, где одни и те же методы вызываются из разных мест.
 
 ### 10. Что такое CSRF-атака и когда её нужно защищать
 
@@ -301,6 +407,35 @@ JwtAuthenticationConverter jwtConverter() {
 ### 13. OAuth2-флоу детально: Authorization Code + PKCE, Client Credentials, Device Code
 
 **Authorization Code + PKCE** (для публичных клиентов: SPA, mobile):
+
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#f3f4f6' } } }%%
+sequenceDiagram
+    participant C as Client (SPA/Mobile)
+    participant U as User (Browser)
+    participant P as Provider (IdP)
+
+    rect rgb(245,248,255)
+    Note over C,P: 1. Prepare PKCE + redirect
+    Note over C: code_verifier = random(43-128)<br/>code_challenge = SHA256(verifier)
+    C->>U: redirect /authorize?code_challenge=...
+    end
+
+    rect rgb(255,252,240)
+    Note over U,P: 2. User login + code back
+    U->>P: GET /authorize (user logs in)
+    P-->>U: 302 ?code=AUTH_CODE&state=...
+    U->>C: receive code (redirect)
+    end
+
+    rect rgb(245,255,245)
+    Note over C,P: 3. Token exchange (PKCE verify)
+    C->>P: POST /token (code + code_verifier)
+    Note over P: verify: SHA256(verifier)==challenge?
+    P-->>C: 200 { access_token, refresh_token }
+    end
+```
+
 1. Клиент генерирует `code_verifier` (случайная строка 43–128 символов) и `code_challenge = BASE64URL(SHA256(code_verifier))`.
 2. Клиент редиректит на `/authorize?response_type=code&client_id=...&code_challenge=...&code_challenge_method=S256&state=...`.
 3. Пользователь логинится на провайдере, провайдер редиректит обратно с `?code=...&state=...`.
@@ -356,6 +491,27 @@ OAuth2ClientRegistrationRepository clientRegistrations() {
 - С rotation: если утёкший `refresh_token` используют **после** того, как легитимный клиент уже получил новый — провайдер понимает, что токен украден, и **отзывает всю сессию**.
 
 **Как работает (псевдокод)**:
+
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#f3f4f6' } } }%%
+stateDiagram-v2
+    [*] --> Active: RT issued
+    Active --> Rotated: client uses RT (POST /token)
+    Rotated --> [*]: RT_NEW issued, RT_OLD invalidated
+    Active --> Revoked: stolen RT used after rotation
+    Rotated --> Revoked: replay attack detected
+    Revoked --> [*]: entire token family revoked
+    classDef s0 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef s1 fill:#fdf9e8,stroke:#d4c38a,stroke-width:2px,color:#1f2937
+    classDef s2 fill:#fdeef0,stroke:#d49a9c,stroke-width:2px,color:#1f2937
+    state "Active" as Active
+    state "Rotated" as Rotated
+    state "Revoked" as Revoked
+    class Active s0
+    class Rotated s1
+    class Revoked s2
+```
+
 ```
 // Клиент: POST /token
 // { grant_type: "refresh_token", refresh_token: "RT_OLD" }
@@ -457,9 +613,10 @@ NimbusJwtDecoder jwtDecoder() {
 
 **Типовые ошибки**:
 - **Не обновлять JWKS** при ротации → `invalid signature`.
-- **Использовать `alg: none`** → уязвимость (подпись не нужна).
+- **`alg: none`** (CRITICAL): злоумышленник подделывает заголовок JWT, убирает подпись и ставит `alg: none` — невалидирующий декодер примет токен как легитимный. **Никогда** не принимать токены с `alg: none`. Spring `NimbusJwtDecoder` защищает по умолчанию (отклоняет `none`), но при кастомном парсинге — проверять.
 - **Не проверять `iss`** (issuer) → токен от другого провайдера принят.
 - **Не проверять `aud`** (audience) → токен для другого API принят.
+- **Чувствительные данные в payload**: помним, что payload — это **Base64, а не шифрование**. Пароли, PII, токены — **никогда** в claims JWS.
 
 ### 16. Token revocation: blacklist vs short TTL + refresh
 
@@ -930,3 +1087,161 @@ public class SecurityAuditListener {
 - **Separate storage** (не в application log).
 - **Immutable** (append-only, no delete).
 - **Alerting** на **anomalies** (много login failures, access denied из нового IP).
+
+### 24. Как тестировать Spring Security (Unit и Integration)
+
+Тестирование безопасности делится на проверку конфигурации и проверку бизнес-логики с учётом прав.
+
+**1. Интеграционные тесты контроллеров (`@WebMvcTest`)**
+
+```java
+@WebMvcTest(OrderController.class)
+@ImportTestConfiguration
+class OrderControllerTest {
+
+    @Autowired MockMvc mockMvc;
+
+    @Test
+    @WithMockUser(username = "admin", roles = {"ADMIN"})
+    void adminCanAccessOrders() throws Exception {
+        mockMvc.perform(get("/api/orders"))
+               .andExpect(status().isOk());
+    }
+
+    @Test
+    void anonymousGets401() throws Exception {
+        mockMvc.perform(get("/api/orders"))
+               .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @WithMockUser(username = "user", roles = {"USER"})
+    void userGets403OnAdminEndpoint() throws Exception {
+        mockMvc.perform(get("/api/admin/orders"))
+               .andExpect(status().isForbidden());
+    }
+}
+```
+
+**2. Тестирование CSRF-защиты**
+
+```java
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+
+@Test
+@WithMockUser
+void postWithCsrfSucceeds() throws Exception {
+    mockMvc.perform(post("/api/orders")
+            .with(csrf())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{}"))
+           .andExpect(status().isCreated());
+}
+
+@Test
+@WithMockUser
+void postWithoutCsrfFails() throws Exception {
+    mockMvc.perform(post("/api/orders")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{}"))
+           .andExpect(status().isForbidden());
+}
+```
+
+**3. Тестирование кастомного JwtAuthFilter**
+
+```java
+@Test
+void jwtFilterSetsAuthentication() throws Exception {
+    mockMvc.perform(get("/api/me")
+            .header("Authorization", "Bearer " + validJwtToken))
+           .andExpect(status().isOk())
+           .andExpect(jsonPath("$.username").value("testuser"));
+}
+
+@Test
+void jwtFilterRejectsExpiredToken() throws Exception {
+    mockMvc.perform(get("/api/me")
+            .header("Authorization", "Bearer " + expiredJwtToken))
+           .andExpect(status().isUnauthorized());
+}
+```
+
+**Аннотации:**
+- **`@WithMockUser`** — быстро, не требует `UserDetailsService`. Указывает username/roles/password.
+- **`@WithUserDetails`** — загружает реального пользователя через `UserDetailsService` (нужен `@MockBean` для репозитория).
+- **`@WithAnonymousUser`** — имитирует анонимный доступ.
+
+**Trade-offs:**
+- `@WithMockUser`: быстро, изолировано, но не проверяет реальную логику загрузки из БД.
+- `@WithUserDetails`: точнее (реальные authorities из БД), но медленнее и требует моканых зависимостей.
+
+**Follow-up:**
+- «А как протестировать кастомный `JwtAuthFilter`?» → Напрямую вызвать `doFilter()` с моком `HttpServletRequest` (заголовок `Authorization: Bearer ...`) и проверить, что в `SecurityContextHolder` появился нужный `Authentication`.
+- «Как тестировать OAuth2 login flow?» → `OAuth2AuthorizationRequestRedirectFilter` + mock `OAuth2AuthorizedClientService`; или `@SpringBootTest` + TestRestTemplate на реальную цепочку (wiremock для IdP).
+
+### 25. Reactive Security (WebFlux)
+
+В **WebFlux** (Project Reactor, non-blocking) Spring Security работает иначе:
+
+| Servlet (Spring MVC) | Reactive (WebFlux) |
+|---|---|
+| `SecurityFilterChain` | `ServerSecurityFilterChain` |
+| `HttpSecurity` | `ReactiveHttpSecurity` |
+| `SecurityContextHolder` (ThreadLocal) | `ReactiveSecurityContextHolder` (Reactor Context) |
+| `OncePerRequestFilter` | `WebFilter` / `WebFilterChain` |
+| `@EnableWebSecurity` | `@EnableWebFluxSecurity` |
+
+**Ключевое отличие**: `ReactiveSecurityContextHolder` **не** использует `ThreadLocal` — контекст передаётся через **Reactor Context** (иммутабельная цепочка `Mono`/`Flux`). Это значит:
+- Контекст **не теряется** при `publishOn` / `subscribeOn` (в отличие от Servlet + `@Async`).
+- Нет проблемы self-invocation с потоками.
+- Но: **нельзя** просто вызвать `SecurityContextHolder.getContext()` — нужно `ReactiveSecurityContextHolder.getContext()`.
+
+```java
+@Configuration
+@EnableWebFluxSecurity
+public class ReactiveSecurityConfig {
+
+    @Bean
+    ServerSecurityFilterChain springSecurityFilterChain(ServerHttpSecurity http) {
+        http
+            .csrf(csrf -> csrf.disable())
+            .authorizeExchange(auth -> auth
+                .pathMatchers("/api/public/**").permitAll()
+                .pathMatchers("/api/admin/**").hasRole("ADMIN")
+                .anyExchange().authenticated())
+            .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .oauth2ResourceServer(o -> o.jwt());
+        return http.build();
+    }
+}
+
+// Доступ к Authentication в reactive-коде:
+Mono<String> currentUsername() {
+    return ReactiveSecurityContextHolder.getContext()
+        .map(ctx -> ctx.getAuthentication().getName());
+}
+```
+
+**Когда использовать**: high-load API с non-blocking I/O (WebFlux + R2DBC), WebSocket, SSE. Для typical CRUD REST — Spring MVC + `@Async` достаточно.
+
+**Trade-offs:**
+- WebFlux: non-blocking, масштабируется на 10K+ concurrent connections с малым числом потоков. Но: сложнее отладка (stack trace через Mono/Flux), не все библиотеки reactive-ready.
+- Spring MVC + virtual threads (Java 21): синхронный код, масштабируется как reactive, проще ментальная модель.
+
+---
+
+## Common Pitfalls (частые ошибки)
+
+| # | Ошибка | Симптомы | Решение |
+|---|--------|----------|---------|
+| 1 | **CORS после Security Filter Chain** | Preflight OPTIONS → 403 | `CorsFilter` должен быть **первым** (Spring Security делает это автоматически через `.cors(withDefaults())`) |
+| 2 | **Забыт `.csrf().disable()` для stateless REST** | 403 на все POST/PUT/DELETE | Для JWT Bearer-схемы CSRF невозможен → отключить |
+| 3 | **`@PostFilter` на больших выборках** | OOM, медленный ответ | Фильтровать в БД (WHERE), не в памяти |
+| 4 | **Хранение PII в JWT payload** | Утечка данных при перехвате | Payload — Base64, **не** шифрование. Только claims (sub, roles, exp) |
+| 5 | **Self-invocation в Method Security** | `@PreAuthorize` игнорируется | Вынести в отдельный бин или `AopContext.currentProxy()` |
+| 6 | **`hasAuthority("ADMIN")` вместо `hasRole("ADMIN")`** | 403 у ADMIN | `hasRole` добавляет `ROLE_` prefix; `hasAuthority` — точное совпадение |
+| 7 | **`alg: none` в JWT** | Подделка токена | Проверять alg; `NimbusJwtDecoder` отклоняет по умолчанию |
+| 8 | **Не проверять `iss` / `aud`** | Токен от другого провайдера принят | Валидировать issuer и audience в `JwtAuthenticationConverter` |
+| 9 | **Session fixation** | Злоумышленник задаёт session ID | `sessionFixation().migrateSession()` (по умолчанию в Spring Security 6) |
+| 10 | **Открытые actuator endpoints** | Утечка env, beans, mappings | `management.endpoints.web.exposure.include=health,info` |

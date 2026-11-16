@@ -379,14 +379,25 @@ ETag: "abc123"
 **Spring Boot caching**:
 ```java
 @GetMapping("/api/products/{id}")
-@CacheControl(maxAge = 3600, cachePublic = true)
-@ETag("product-{id}")
-public Product getProduct(@PathVariable Long id) {
-  return productRepo.findById(id);
+public ResponseEntity<Product> getProduct(@PathVariable Long id) {
+    Product product = productRepo.findById(id).orElseThrow();
+
+    // ETag на основе хэша содержимого
+    String etag = "\"" + DigestUtils.md5DigestAsHex(product.toString().getBytes(StandardCharsets.UTF_8)) + "\"";
+
+    return ResponseEntity.ok()
+        .cacheControl(CacheControl.maxAge(3600).cachePublic())
+        .eTag(etag)
+        .body(product);
 }
+
+// Обработка If-None-Match (Spring делает это автоматически для ResponseEntity с ETag):
+// Если клиент прислал If-None-Match с тем же ETag → Spring вернёт 304 Not Modified без тела.
 ```
 
-**Вывод**: **HTTP caching** = **client** **кэширует** **response**. **Cache-Control** (**max-age**, **public**, **private**, **no-cache**, **no-store**, **must-revalidate**, **stale-while-revalidate**). **ETag** + **If-None-Match** (**304 Not Modified**). **If-Modified-Since** (**last-modified** **date**). **Spring Boot**: **@CacheControl**, **@ETag**.
+> **Важно:** аннотаций `@CacheControl` и `@ETag` в Spring Boot **не существует**. Кэширование настраивается через `ResponseEntity` (`.cacheControl()`, `.eTag()`) или через `WebMvcConfigurer.addInterceptors()` для глобальной настройки.
+
+**Вывод**: **HTTP caching** = **client** **кэширует** **response**. **Cache-Control** (**max-age**, **public**, **private**, **no-cache**, **no-store**, **must-revalidate**, **stale-while-revalidate**). **ETag** + **If-None-Match** (**304 Not Modified**). **If-Modified-Since** (**last-modified** **date**). **Spring Boot**: **ResponseEntity.cacheControl()** + **ResponseEntity.eTag()** (аннотаций @CacheControl/@ETag нет).
 
 ### 22. Как работать с WebSocket и SSE (Server-Sent Events)
 
@@ -573,4 +584,602 @@ Server:
 - **HTTP/3** (QUIC): **no head-of-line blocking** (transport layer, UDP).
 
 **Вывод**: **HTTP/2 multiplexing** = **N** **streams** на **1** **connection** (не **1** **request** на **1** **connection**). **Stream** имеет **ID**, **weight** (1-256), **dependency**. **No head-of-line blocking** (application layer). **HTTP/3** (QUIC): **no head-of-line blocking** (transport layer, UDP).
+
+
+### 26. gRPC vs REST: когда что использовать
+
+**REST** (HTTP/1.1 + JSON):
+- **Плюсы**: читаемость, browser support, кэширование, простота отладки (curl, browser).
+- **Минусы**: verbosity JSON, нет streaming из коробки, overhead на сериализацию.
+- **Когда использовать**: публичные API, интеграции с внешними клиентами, browser-based приложения.
+
+**gRPC** (HTTP/2 + Protobuf):
+- **Плюсы**: бинарный протокол (быстрее JSON в 3–10 раз), HTTP/2 multiplexing, встроенный streaming, code generation из `.proto`, строгие контракты.
+- **Минусы**: не читается человеком, нет нативного browser support, сложнее отладка.
+- **Когда использовать**: internal service-to-service в микросервисах, high-load системы, streaming данных.
+
+**Сравнение:**
+
+| Критерий | REST | gRPC |
+|----------|------|------|
+| Протокол | HTTP/1.1 (или 2) | HTTP/2 (обязательно) |
+| Формат | JSON (text) | Protobuf (binary) |
+| Производительность | Средняя | Высокая (×3–10) |
+| Streaming | Нет (только SSE/WebSocket) | Да (4 типа) |
+| Browser support | Да | Нет (нужен gRPC-Web + proxy) |
+| Кэширование | Да (HTTP cache) | Ограничено |
+| Schema | OpenAPI (опционально) | `.proto` (обязательно) |
+| Отладка | Просто (curl, browser) | Сложнее (grpcurl, gRPC-Web UI) |
+
+**Типы streaming в gRPC:**
+
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#f3f4f6' } } }%%
+flowchart LR
+    subgraph "1. Unary"
+        C1["Client"] -->|"request"| S1["Server"]
+        S1 -->|"response"| C1
+    end
+    subgraph "2. Server streaming"
+        C2["Client"] -->|"request"| S2["Server"]
+        S2 -->|"stream of responses"| C2
+    end
+    subgraph "3. Client streaming"
+        C3["Client"] -->|"stream of requests"| S3["Server"]
+        S3 -->|"single response"| C3
+    end
+    subgraph "4. Bidirectional"
+        C4["Client"] -->|"stream of requests"| S4["Server"]
+        S4 -->|"stream of responses"| C4
+    end
+
+    classDef client fill:#e0f2fe,stroke:#0284c7,stroke-width:2px
+    classDef server fill:#f0fdf4,stroke:#16a34a,stroke-width:2px
+    class C1,C2,C3,C4 client
+    class S1,S2,S3,S4 server
+```
+
+1. **Unary**: обычный request-response.
+2. **Server streaming**: клиент шлёт 1 запрос, сервер стримит ответы.
+3. **Client streaming**: клиент стримит запросы, сервер отвечает 1 раз.
+4. **Bidirectional streaming**: оба стримят одновременно (chat, real-time data).
+
+**Пример `.proto`:**
+```protobuf
+syntax = "proto3";
+
+service OrderService {
+  rpc GetOrder (OrderRequest) returns (OrderResponse);           // Unary
+  rpc StreamOrders (StreamRequest) returns (stream OrderResponse); // Server streaming
+  rpc StreamUpdates (stream UpdateRequest) returns (AckResponse);  // Client streaming
+  rpc RealtimeData (stream Query) returns (stream Data);          // Bidirectional
+}
+
+message OrderRequest { int64 order_id = 1; }
+message OrderResponse { int64 order_id = 1; string status = 2; double total = 3; }
+```
+
+**Trade-offs:**
+- gRPC для internal API → максимальная производительность, но нужна инфраструктура (Envoy для browser).
+- REST для public API → максимальная совместимость, но ниже производительность.
+- **Гибрид (рекомендация)**: gRPC для internal communication между микросервисами + REST API Gateway для внешних клиентов.
+
+**Follow-up:**
+- «Как gRPC работает через браузер?» → gRPC-Web + Envoy proxy (транслирует gRPC-Web → gRPC).
+- «Почему gRPC не подходит для публичных API?» → Нет browser support, нет кэширования, сложно для third-party интеграций.
+- «Когда REST лучше gRPC даже для internal communication?» → Когда нужна простота, отладка, или команда не знакома с gRPC.
+
+
+### 27. GraphQL vs REST: когда использовать
+
+**Проблема REST — over/under-fetching:**
+- `GET /users/1` возвращает **все** поля пользователя, даже если UI нужен только `name`.
+- Для отображения профиля нужны данные из 3 сервисов → 3 отдельных запроса (или N+1).
+
+**GraphQL решает:**
+- Клиент запрашивает **ровно те поля**, которые нужны.
+- **Single endpoint** (`POST /graphql`) вместо множества REST-эндпоинтов.
+- **Schema-first**: `.graphql` файл описывает типы, resolvers маппят на данные.
+
+```graphql
+# Schema
+type User { id: ID!, name: String, email: String, orders: [Order!]! }
+type Order { id: ID!, total: Float, status: String }
+
+# Query (клиент выбирает только нужное)
+query {
+  user(id: 1) {
+    name
+    orders {
+      total
+    }
+  }
+}
+```
+
+**Сравнение:**
+
+| Критерий | REST | GraphQL |
+|----------|------|---------|
+| Endpoints | Множество (`/users`, `/orders`) | Один (`/graphql`) |
+| Fetching | Over/under | Только нужное |
+| Кэширование | HTTP cache (GET) | Сложнее (POST, один endpoint) |
+| Документация | OpenAPI | Schema (автогенерация) |
+| Интроспекция | Нет | Да (built-in) |
+| Поддержка браузером | Да | Да |
+| Подходящий сценарий | CRUD API, публичный API | Сложные UI, разные клиенты |
+
+**Проблемы GraphQL:**
+- **N+1 на сервере**: один запрос может вызвать N резолверов → Dataloaders для батчинга.
+- **Кэширование сложнее**: POST-запросы не кэшируются браузером/CDN.
+- **Сложные запросы**: клиент может отправить запрос с глубоким вложенным уровнем → нужны лимиты (`query depth`, `max complexity`).
+- **Инструменты**: нужен schema registry, code generation, introspection.
+
+**Когда GraphQL оправдан:**
+- Разные клиенты (Web, Mobile, IoT) с разными потребностями в данных.
+- Сложные UI с агрегацией данных из нескольких сервисов.
+- Нужна интроспекция и автогенерация документации.
+
+**Когда overkill:**
+- Простой CRUD API с фиксированным набором полей.
+- Публичный API с множеством внешних потребителей (кэширование важно).
+- Команда не готова к сложностям (N+1, глубина запросов).
+
+
+### 28. Rate Limiting: паттерны и реализация
+
+**Зачем:** защита от DDoS, защита платных API от злоупотребления, гарантия стабильности.
+
+**Алгоритмы:**
+
+| Алгоритм | Как работает | Плюс | Минус |
+|----------|-------------|------|-------|
+| **Fixed Window** | Счётчик запросов за фиксированный период (минуту). Сброс в начале окна. | Простой | Burst на границе окон (2×limit за 2 минуты) |
+| **Sliding Window** | Считает запросы за скользящий период (последние 60 сек). | Нет burst на границе | Дороже (нужна история) |
+| **Token Bucket** | Кад (bucket) на N токенов, пополняется со скоростью R/sec. Запрос = 1 токен. | Гибко, допускает burst до N | Более сложная логика |
+| **Leaky Bucket** | Кад переливается со постоянной скоростью R/sec. Избыток отбрасывается. | Сглаживает traffic | Не допускает burst |
+
+**Token Bucket (самый популярный):**
+
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#f3f4f6' } } }%%
+flowchart TD
+    REQ["Incoming request"] --> CHECK{"Tokens > 0?"}
+    CHECK -->|"yes"| DECR["Decrement tokens"]
+    DECR --> OK["200 OK"]
+    CHECK -->|"no"| REJECT["429 Too Many Requests"]
+
+    REPLEN["Refill: +rate/sec<br/>up to capacity"] -.->|"background"| CHECK
+
+    classDef req fill:#e0f2fe,stroke:#0284c7,stroke-width:2px
+    classDef decision fill:#faf5ff,stroke:#9333ea,stroke-width:2px
+    classDef action fill:#e0f2fe,stroke:#0284c7,stroke-width:2px
+    classDef ok fill:#f0fdf4,stroke:#16a34a,stroke-width:2px
+    classDef err fill:#fef2f2,stroke:#dc2626,stroke-width:2px
+    classDef refill fill:#fff7ed,stroke:#ea580c,stroke-width:2px
+    class REQ req
+    class CHECK decision
+    class DECR action
+    class OK ok
+    class REJECT err
+    class REPLEN refill
+```
+
+**HTTP-заголовки (рекомендация RFC 6585 + IETF draft):**
+```http
+# Response 200:
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 85
+X-RateLimit-Reset: 1700000000
+
+# Response 429:
+Retry-After: 60
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 0
+```
+
+**Где хранить счётчики:**
+- **In-memory** (Caffeine, ConcurrentHashMap): простой, но не масштабируется на несколько инстансов.
+- **Redis**: `INCR` + `EXPIRE` или Lua-скрипт для атомарной проверки. Рекомендуется для distributed rate limiting.
+
+**Spring Boot реализация:**
+- **Bucket4j**: `@RateLimiter` + Redis backend.
+- **Resilience4j**: `RateLimiter` (in-memory или через кастомный backend).
+- **Spring Cloud Gateway**: `RateLimiter` filter (Redis-based).
+
+**Follow-up:**
+- «Как реализовать distributed rate limiting?» → Redis + Lua-скрипт (атомарная проверка и инкремент).
+- «Почему Token Bucket лучше Fixed Window?» → Нет burst на границе, допускает контролируемый burst до capacity.
+
+
+### 29. Idempotency Key: как защитить POST от дублирования
+
+**Проблема:** `POST /payments` отправлен, сеть потеряла ответ. Клиент повторяет запрос → **два платежа**.
+
+**Решение — Idempotency Key:**
+1. Клиент генерирует уникальный UUID для операции.
+2. Передаёт в заголовке `Idempotency-Key: <uuid>`.
+3. Сервер проверяет Redis/БД: есть ли уже результат для этого ключа?
+   - **Да** → возвращает кэшированный ответ (не выполняет операцию повторно).
+   - **Нет** → выполняет операцию, сохраняет результат по ключу, возвращает.
+4. TTL ключа: обычно **24 часа** (после этого операция считается "забытой").
+
+```java
+@RestController
+public class PaymentController {
+
+    @PostMapping("/payments")
+    public ResponseEntity<PaymentResponse> pay(
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
+            @Valid @RequestBody PaymentRequest request) {
+
+        // 1. Проверяем кэш
+        Optional<PaymentResponse> cached = redis.get(idempotencyKey);
+        if (cached.isPresent()) {
+            return ResponseEntity.ok(cached.get()); // Повторный запрос
+        }
+
+        // 2. Выполняем операцию
+        PaymentResponse response = paymentService.process(request);
+
+        // 3. Кэшируем результат (TTL 24h)
+        redis.setex(idempotencyKey, 86400, response);
+
+        return ResponseEntity.status(201).body(response);
+    }
+}
+```
+
+**Пример из Stripe API:**
+```http
+POST /v1/charges
+Idempotency-Key: a3f8c2e1-7b4d-4e9a-8c6f-1d2e3f4a5b6c
+Content-Type: application/json
+
+{ "amount": 5000, "currency": "usd", "source": "tok_visa" }
+```
+Stripe хранит idempotency key 24 часа. Повторный запрос с тем же ключом вернёт тот же `charge` объект.
+
+**Когда нужен:**
+- `POST`/`DELETE` с побочными эффектами (платежи, создание заказов, отправка писем).
+- Retries в distributed systems (Kafka consumer, message queue).
+- **Не нужен** для `GET` (идемпотентен по определению) и `PUT` (полная замена).
+
+**Важно:**
+- Ключ должен быть **уникальным на операцию**, а не на запрос. Повторная та же логическая операция → тот же ключ.
+- Хранить результат **до** commit транзакции (иначе race condition).
+- Использовать **Redis** (быстро, TTL) или **БД** (надёжно, но медленнее).
+
+
+### 30. Webhook vs Callback vs Polling: как получать уведомления
+
+**Сравнение:**
+
+| Метод | Направление | Нужен публичный endpoint | Latency | Надёжность |
+|-------|-------------|--------------------------|---------|------------|
+| **Polling** | Клиент → Сервер (периодический запрос) | Нет | Высокая (зависит от интервала) | Высокая (просто) |
+| **Callback** | Сервер → Клиент (по URL из запроса) | Да | Низкая | Средняя (нужны retry) |
+| **Webhook** | Сервер → Клиент (зарегистрированный URL + подпись) | Да | Низкая | Высокая (подпись + retry) |
+
+**Polling:**
+```
+Client: GET /api/orders/123/status (каждые 30 сек)
+Server: 200 { "status": "processing" }
+... (повторяется до завершения)
+```
+- **Плюс**: простой, нет публичного endpoint.
+- **Минус**: неэффективно (лишние запросы), высокая задержка.
+
+**Callback:**
+```
+Client: POST /api/jobs { "url": "https://client.com/done", "data": ... }
+Server: (выполняет задачу) → POST https://client.com/done { "result": ... }
+```
+- **Плюс**: push-модель, низкая задержка.
+- **Минус**: клиент должен иметь публичный endpoint, нет стандарта подписи.
+
+**Webhook (стандартизированный callback):**
+```
+1. Клиент регистрирует webhook:
+   POST /webhooks { "url": "https://client.com/webhook", "events": ["payment.succeeded"] }
+
+2. Сервер при событии:
+   POST https://client.com/webhook
+   X-Stripe-Signature: t=1700000000,v1=5257a86aaa...
+   Content-Type: application/json
+   { "id": "evt_1", "type": "payment.succeeded", "data": {...} }
+
+3. Клиент верифицирует подпись (HMAC-SHA256):
+   signature = HMAC_SHA256(webhook_secret, timestamp + "." + payload)
+```
+
+**Безопасность webhook:**
+- **HMAC-подпись**: сервер подписывает payload секретами, клиент проверяет.
+- **Timestamp**: защита от replay-атак (отклонять если `|now - timestamp| > 5 мин`).
+- **Retry-политика**: exponential backoff (1 мин, 5 мин, 30 мин, 2 часа, 12 часов).
+- **Идемпотентность**: клиент должен обрабатывать повторные webhook-вызовы (однако тот же event ID).
+
+**Когда что использовать:**
+- **Polling**: внутренние системы, нет публичного endpoint, low frequency.
+- **Callback**: простые интеграции, оба стороны в одном домене.
+- **Webhook**: внешние интеграции (Stripe, GitHub, payment gateways), нужна верификация.
+
+
+### 31. Circuit Breaker: паттерн отказоустойчивости
+
+**Проблема:** внешний сервис падает. Каждый запрос ждёт timeout (5 сек) → поток блокируется → cascade failure.
+
+**Решение — Circuit Breaker:**
+- **Closed** (норма): запросы проходят. Считаем ошибки.
+- **Open** (срабатывает): после N ошибок подряд → **отказываем сразу** (fail fast), не ждём timeout.
+- **Half-Open** (проверка): после timeout-периода пропускаем 1 запрос. Если успех → Closed. Если ошибка → Open снова.
+
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#f3f4f6' } } }%%
+stateDiagram-v2
+    [*] --> Closed
+    Closed --> Open: N errors in window
+    Open --> HalfOpen: timeout (e.g. 30s)
+    HalfOpen --> Closed: test request succeeds
+    HalfOpen --> Open: test request fails
+    classDef s0 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef s1 fill:#fdeef0,stroke:#d49a9c,stroke-width:2px,color:#1f2937
+    classDef s2 fill:#fdf9e8,stroke:#d4c38a,stroke-width:2px,color:#1f2937
+    state "Closed" as Closed
+    state "Open" as Open
+    state "Half-Open" as HalfOpen
+    class Closed s0
+    class Open s1
+    class HalfOpen s2
+```
+
+**Spring Boot (Resilience4j):**
+```java
+@RestController
+public class OrderController {
+
+    @CircuitBreaker(name = "inventoryService", fallbackMethod = "fallbackInventory")
+    public Inventory checkInventory(@PathVariable Long productId) {
+        return inventoryClient.check(productId); // Вызов внешнего сервиса
+    }
+
+    // Fallback: вызывается при open circuit или исключении
+    private Inventory fallbackInventory(Long productId, Throwable t) {
+        return Inventory.unknown(); // Кэшированные данные или дефолт
+    }
+}
+```
+
+```yaml
+# application.yml
+resilience4j:
+  circuitbreaker:
+    instances:
+      inventoryService:
+        failureRateThreshold: 50        # 50% ошибок → open
+        slidingWindowType: COUNT_BASED
+        slidingWindowSize: 10           # окно из 10 запросов
+        waitDurationInOpenState: 30s    # 30 сек в open state
+        permittedNumberOfCallsInHalfOpenState: 3
+```
+
+**Когда использовать:**
+- Вызовы внешних API (payment gateways, email, SMS).
+- Вызовы других микросервисов.
+- БД-операции (если БД может деградировать).
+
+**Trade-offs:**
+- **Плюс**: fail fast (миллисекунды вместо секунд), защита от cascade failure.
+- **Минус**: сложность, нужно правильно настроить пороги (слишком чувствительный → false positive).
+
+**Связь с другими паттерни:**
+- **Timeout**: circuit breaker часто комбинируется с timeout (Resilience4j `@TimeLimiter`).
+- **Retry**: retry **внутри** circuit breaker (не наоборот — иначе retry-шторм).
+- **Bulkhead**: ограничение числа concurrent-вызовов (отдельный паттерн).
+
+
+### 32. OpenAPI / Swagger: документирование REST API
+
+**OpenAPI 3.0** — стандарт де-факто для описания REST API (YAML/JSON).
+
+**Что описывает:**
+- Endpoints (path, method, params, request body, responses).
+- Схемы (сущности, DTO, enum).
+- Security schemes (OAuth2, API key, Bearer).
+- Серверы (base URL, environment).
+
+**Пример (YAML):**
+```yaml
+openapi: 3.0.3
+info:
+  title: Order API
+  version: 1.0.0
+servers:
+  - url: https://api.example.com/v1
+paths:
+  /orders:
+    get:
+      operationId: listOrders
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: size
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: List of orders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderList'
+    post:
+      operationId: createOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location:
+              schema: { type: string, format: uri }
+components:
+  schemas:
+    CreateOrderRequest:
+      type: object
+      required: [customerId, items]
+      properties:
+        customerId: { type: string, format: uuid }
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItem'
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+security:
+  - bearerAuth: []
+```
+
+**Springdoc-openapi (автогенерация из Spring Boot кода):**
+```xml
+<dependency>
+    <groupId>org.springdoc</groupId>
+    <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+    <version>2.5.0</version>
+</dependency>
+```
+```yaml
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+```
+- Swagger UI доступен по `/swagger-ui.html`.
+- OpenAPI JSON — по `/api-docs`.
+- Автогенерация из `@RestController` + `@Operation`, `@Schema` аннотаций.
+
+**Code-first vs Design-first:**
+- **Code-first**: пишем Java-код → springdoc генерирует OpenAPI. Быстро, но documentation лags behind.
+- **Design-first**: пишем OpenAPI YAML → генерируем клиент/сервер код. Лучший для команды, где API меняется редко.
+
+**Когда нужен:**
+- Публичный API (внешние потребители).
+- Большая команда (несколько сервисов).
+- Нужна автогенерация клиентского кода.
+
+
+### 33. BFF (Backend for Frontend) паттерн
+
+**Проблема микросервисов:** один UI (Web/Mobile) нуждается в данных из 5–10 микросервисов. Каждый запрос UI → 5+ HTTP-вызовов к разным сервисам → N+1 на клиенте.
+
+**Решение — BFF:**
+- Отдельный слой API, который **агрегирует** данные из нескольких микросервисов и отдаёт **один ответ** под конкретный UI.
+- Разные BFF для разных клиентов: Web BFF, Mobile BFF, IoT BFF.
+
+```
+Web Client → Web BFF → [Order Service, User Service, Payment Service, Inventory Service]
+Mobile Client → Mobile BFF → [Order Service, User Service, Notification Service]
+```
+
+**Когда использовать:**
+- Разные клиенты с разными потребностями (Web показывает 10 полей, Mobile — 3).
+- Агрегация данных из 3+ микросервисов в один ответ.
+- Оптимизация payload под конкретный клиент (Mobile → меньше данных).
+
+**Когда не нужен:**
+- Один клиент, один сервис (overkill).
+- Простой CRUD API.
+
+**Trade-offs:**
+- **Плюс**: меньше запросов с клиента, оптимизация payload, изоляция клиентов.
+- **Минус**: ещё один слой (latency), дублирование логики между BFF, сложнее deployment.
+
+
+### 34. API Security: чек-лист безопасности
+
+| # | Тема | Рекомендация |
+|---|------|--------------|
+| 1 | **HTTPS** | Всегда TLS 1.2+. HSTS header (`Strict-Transport-Security`). |
+| 2 | **Аутентификация** | OAuth2 / JWT для user-to-service. API key для machine-to-machine. |
+| 3 | **Авторизация** | RBAC/ABAC. Не полагаться только на аутентификацию. |
+| 4 | **Input validation** | `@Valid` + Bean Validation (`@Size`, `@Pattern`, `@NotNull`). Whitelist, не blacklist. |
+| 5 | **SQL Injection** | Parameterized queries (JPA, PreparedStatement). Никогда не конкатенация SQL. |
+| 6 | **XSS** | `Content-Security-Policy` header. Escape HTML в ответах. |
+| 7 | **Rate limiting** | Защита от brute force и DDoS (см. Q28). |
+| 8 | **CORS** | Не использовать `*` с `credentials: true`. Whitelist origin. |
+| 9 | **Секреты** | Не логировать токены, API keys, пароли. Env vars / secrets manager. |
+| 10 | **Ошибки** | Не раскрывать stack trace в production. ProblemDetail (RFC 7807). |
+| 11 | **CORS + Preflight** | Кэшировать preflight (`Access-Control-Max-Age`). |
+| 12 | **Webhook** | HMAC-подпись + timestamp verification (см. Q30). |
+
+**Пример ProblemDetail (RFC 7807):**
+```json
+{
+  "type": "https://api.example.com/errors/validation",
+  "title": "Validation failed",
+  "status": 422,
+  "detail": "Field 'email' is invalid",
+  "errors": {
+    "email": "Must be a valid email address"
+  }
+}
+```
+
+
+### 35. API Contract Testing: Pact и другие подходы
+
+**Проблема:** микросервис A вызывает B. B меняет API (переименовал поле) → A ломается. Обнаруживается только в integration test (дорого) или в production.
+
+**Решение — Contract Testing:**
+- **Consumer-driven contract**: потребитель (A) описывает, что он ожидает от провайдера (B). Провайдер проверяет, что его API соответствует контракту.
+- **OpenAPI-based**: провайдер публикует OpenAPI spec, потребитель генерирует mock из неё и проверяет совместимость.
+
+**Pact (consumer-driven):**
+```
+1. Consumer (A) пишет тест с mock-сервером:
+   - Ожидает: GET /orders/123 → 200 { "id": 123, "status": "shipped" }
+   - Pact-файл: { "consumer": "A", "provider": "B", "interactions": [...] }
+
+2. Provider (B) запускает verification:
+   - Проверяет свой API против pact-файла.
+   - Если несовместимость → CI падает **до** deployment.
+```
+
+**Когда использовать:**
+- Микросервисы (10+ сервисов, часто меняются).
+- Публичный API с внешними потребителями.
+- CI/CD pipeline с автоматической проверкой совместимости.
+
+**Trade-offs:**
+- **Плюс**: раннее обнаружение breaking changes, независимость consumer/provider.
+- **Минус**: сложность настройки (Pact Broker), overhead на тестирование.
+
+
+### 36. Common Pitfalls: частые ошибки в REST API
+
+| # | Ошибка | Последствие | Решение |
+|---|--------|-------------|---------|
+| 1 | `GET` с побочными эффектами | Нарушение идемпотентности, кэширование GET с мутациями | Использовать `POST`/`PUT`/`DELETE` для мутаций |
+| 2 | Отсутствие `Retry-After` в `429` | Клиент не знает, когда повторять | Всегда добавлять `Retry-After: <seconds>` |
+| 3 | `Access-Control-Allow-Origin: *` + `credentials: true` | Браузер **запрещает** (CORS spec) | Указывать конкретный origin или не использовать credentials |
+| 4 | Чувствительные данные в URL (query params) | Логируются в proxy, browser history, referer header | Переносить в body (POST) или header |
+| 5 | Отсутствие idempotency для `POST`/`DELETE` | Дубликаты при retry | `Idempotency-Key` header + Redis (см. Q29) |
+| 6 | Версионирование через `Accept` header | Сложно кэшировать, debug, test | URI versioning (`/api/v1/`) |
+| 7 | `PUT` с частичным payload | Поля, не переданные, сбрасываются | Использовать `PATCH` для частичного обновления |
+| 8 | `404` для защищённых ресурсов | Раскрытие существования ресурса | `403` для аутентифицированных без права, `404` для анонимных |
+| 9 | Нет rate limiting на публичных API | DDoS, brute force | Rate limiter на gateway (см. Q28) |
+| 10 | Stack trace в production error | Раскрытие информации о внутреннем состоянии | ProblemDetail (RFC 7807), generic message |
+
+> 🔗 Про OAuth2 flows — см. `spring-security.md`.
+> 🔗 Про ProblemDetail (RFC 7807) — см. `spring-boot.md`.
+> 🔗 Про Circuit Breaker / Resilience4j — см. `spring-boot.md`.
 
