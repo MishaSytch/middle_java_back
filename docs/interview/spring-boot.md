@@ -40,6 +40,45 @@ public class OrderService {
 - **Setter injection**: зависимости передаются через вызовы setter-методов после создания объекта. Поля не могут быть `final`. Подходит для опциональных или переконфигурируемых зависимостей.
 - **Field injection**: зависимости внедряются напрямую в поля с помощью `@Autowired`. Поля не могут быть `final`, объект можно создать без зависимостей (они будут `null`), что скрывает проблемы до момента использования.
 
+```mermaid
+%%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
+flowchart TD
+    subgraph lifecycle [Bean Lifecycle]
+        direction TB
+        A[1. Instantiation] --> B[2. Constructor Injection]
+        B --> C[3. Property Population]
+        C --> D[4. Aware interfaces]
+        D --> E[5. BPP before init]
+        E --> F[6. @PostConstruct]
+        F --> G[7. BPP after init]
+        G --> H[8. Ready for use]
+        H --> I[9. Destruction]
+    end
+    J[Constructor injection — поля final, объект полный сразу]
+    K[Setter injection — вызов setter'ов, опциональные зависимости]
+    L[Field injection — @Autowired на полях, через рефлексию]
+    J -.-> B
+    K -.-> C
+    L -.-> C
+    classDef n0 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n4 fill:#d9f99d,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    class A n0
+    class B n1
+    class C n2
+    class D n3
+    class E n4
+    class F n4
+    class G n4
+    class H n4
+    class I n4
+    class J n1
+    class K n2
+    class L n3
+```
+
 
 ### 3. Какой тип injection рекомендуется использовать и почему
 

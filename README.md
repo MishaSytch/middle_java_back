@@ -73,6 +73,15 @@
 41. [Supply Chain Security](docs/interview/supply-chain-security.md) *(опционально)*
 42. [Legacy Modernization](docs/interview/legacy-modernization.md) *(опционально)*
 
+### Иностранные компании
+
+43. [Требования в иностранных компаниях](docs/interview/foreign-companies.md) (общие ожидания, system design, coding, behavioural, visa, compensation, культура)
+44. [Облако и DevOps: AWS, GCP, Azure, Terraform, K8s](docs/interview/foreign-cloud-devops.md) (US)
+45. [Compliance и security: GDPR, PCI-DSS, SOC 2, DORA, PSD2](docs/interview/foreign-compliance-security.md) (EU/UK)
+46. [Финтех и payments: idempotency, Saga, event-driven](docs/interview/foreign-fintech-payments.md) (UK/EU)
+47. [Real-time, scale, security, mobile](docs/interview/foreign-realtime-scale.md) (Israel)
+48. [SEA и multi-country: e-commerce, ride-hailing](docs/interview/foreign-sea-multicountry.md) (Singapore)
+
 ## Оглавление — Лайв-кодинг
 
 ### Tier 1
