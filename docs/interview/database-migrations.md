@@ -744,184 +744,134 @@ client.executeStatement(req);
 
 **Вывод**: **cloud** (RDS, Cloud SQL) → **no SSH**, **no root**, **migrations** через **app** (Flyway/Liquibase) или **RDS Data API**. **Multi-AZ**: **migrations** на **primary**. **Blue/green**: **preview** **migration**, **cutover** (short downtime).
 
-### 15. Disaster recovery и migrations
+### 15. Disaster Recovery и миграции
 
-**Проблема**: **disaster** (например: **DB crash**) → **migrations** **не завершены** → **inconsistent state**.
+**Проблема:** катастрофа (например, сбой БД) приводит к тому, что миграции не завершены, и база оказывается в неконсистентном состоянии.
 
-**DR** (Disaster Recovery) + **migrations**:
-1. **Backup**: **automated** (например: **RDS** **snapshot** каждые **6 часов**).
-2. **Recovery**: **restore** **backup** → **migrations** **re-apply** (idempotent).
-3. **RPO** (Recovery Point Objective): **максимальная** **потеря** **data** (например: **15 мин**).
-4. **RTO** (Recovery Time Objective): **максимальное** **время** **recovery** (например: **1 час**).
+**Стратегия Disaster Recovery (DR) + миграции:**
+1. **Резервное копирование:** автоматические бэкапы (например, RDS snapshot каждые 6 часов).
+2. **Восстановление:** restore из бэкапа → повторное применение миграций (idempotent).
+3. **RPO (Recovery Point Objective):** максимальная потеря данных (например, 15 минут).
+4. **RTO (Recovery Time Objective):** максимальное время восстановления (например, 1 час).
 
-**Idempotent migrations**:
-- **Flyway** / **Liquibase** — **idempotent** (если **migration** **уже** **applied**, **не** **re-apply**).
-- **Data migration**: **idempotent** (например: **UPSERT**).
+**Идемпотентность миграций:**
+- **Flyway/Liquibase** — идемпотентны (если миграция уже применена, она не применяется повторно).
+- **Миграции данных** — должны быть идемпотентными (например, использование `UPSERT`).
 
-**Регламент**:
-1. **DB crash** → **alert** (например: **Prometheus**).
-2. **Restore** **backup** (например: **RDS** **restore**).
-3. **Flyway**: **migrate** (re-apply **unapplied** **migrations**).
-4. **Smoke test**: **check** **data** (например: **SELECT COUNT(*)**).
-5. **Traffic**: **switch** на **restored** **DB**.
+**Регламент при сбое:**
+1. Сбой БД → алерт (например, через Prometheus).
+2. Восстановление из бэкапа (например, RDS restore).
+3. Flyway: `migrate` (применение неприменённых миграций).
+4. Smoke test: проверка данных (например, `SELECT COUNT(*)`).
+5. Переключение трафика на восстановленную БД.
 
-**РTO/RPO**:
-| RTO | RPO | Уровен |
-|-----|-----|--------|
-| 1 час | 15 мин | **high** (production) |
-| 6 часов | 1 час | **medium** (staging) |
-| 24 часа | 6 часов | **low** (dev) |
+**Цели RTO/RPO:**
+| RTO | RPO | Уровень |
+|-----|-----|---------|
+| 1 час | 15 минут | Высокий (production) |
+| 6 часов | 1 час | Средний (staging) |
+| 24 часа | 6 часов | Низкий (dev) |
 
-**Вывод**: **DR** + **migrations** → **backup** (automated), **restore**, **idempotent** **migrations** (Flyway/Liquibase), **smoke test**. **RTO/RPO**: **high** (1 час / 15 мин), **medium** (6 часов / 1 час), **low** (24 часа / 6 часов).
+**Вывод:** DR + миграции — это автоматические бэкапы, восстановление, идемпотентные миграции (Flyway/Liquibase) и smoke test. Цели RTO/RPO зависят от среды: production (1 час / 15 минут), staging (6 часов / 1 час), dev (24 часа / 6 часов).
 
+### 16. Обеспечение консистентности и валидация данных после миграции
 
-### 16. Как мигрировать данные с сохранением консистентности
+Любая миграция данных (особенно с изменением типов или переименованием колонок) несёт риск повреждения данных. Процесс должен включать обязательные проверки.
 
-**Проблема:** **data migration** (например: **rename column**) → **data** могла **повредиться**.
+**Стратегии валидации:**
+1. **Count Check:** сравнение количества строк до и после миграции (`SELECT COUNT(*)`).
+2. **Aggregate Check:** сравнение контрольных сумм агрегатов (`SUM`, `AVG`, `MIN`, `MAX`) для числовых данных.
+3. **Referential Integrity:** проверка, что внешние ключи (FK) не были нарушены.
+4. **Spot Check:** выборочная ручная или автоматическая проверка N случайных записей.
 
-**Подходы**:
-1. **Expand-contract** — **добавить** **new column**, **заполнить**, **убрать** **old**.
-2. **Dual-write** — **писать** в **обе** **таблицы** (временное).
-3. **CDC** (Change Data Capture) — **Debezium** (Kafka Connect).
+**Автоматизация валидации:**
+- **Java-миграции (Flyway):** можно написать класс, наследующий `BaseJavaMigration`, который выполнит SQL-проверки и выбросит `MigrationException` при несовпадении.
+- **Специализированные инструменты:** для сложных пайплайнов используются **Great Expectations** (Python), **Deequ** (Spark) или **dbt tests** (SQL), которые запускаются после применения миграций.
 
-**Expand-contract**:
+**Важно:** валидация должна быть частью CI/CD пайплайна. Если контрольная сумма не совпадает, деплой должен быть остановлен, а не просто залогирован.
+
+### 17. Миграция между СУБД и в реальном времени (CDC)
+
+Перенос данных между разными СУБД (например, PostgreSQL → MySQL) или реорганизация схемы на лету требует подходов, исключающих длительный простой.
+
+**1. Change Data Capture (CDC) через Debezium:**
+Самый надёжный способ для high-load систем. Debezium читает WAL (PostgreSQL) или binlog (MySQL) и стримит изменения в Kafka.
+- **Flow:** `PostgreSQL (WAL) → Debezium Connector → Kafka Topic → Consumer (запись в новую БД)`.
+- **Преимущества:** real-time синхронизация, минимальная нагрузка на source-БД, возможность replay событий.
+- **Использование:** миграция между СУБД, инвалидация кэша (CDC → Redis), построение Data Lake.
+
+**2. Облачные инструменты (Managed DMS):**
+Для миграции внутри одного облака (RDS → Aurora, Cloud SQL → Spanner) предпочтительны нативные сервисы: **AWS DMS**, **Google DMS**. Они берут на себя маппинг типов данных и репликацию с минимальной настройкой.
+
+**Маппинг типов (PostgreSQL → MySQL):**
+| PostgreSQL | MySQL |
+|------------|-------|
+| `SERIAL` | `AUTO_INCREMENT` |
+| `TIMESTAMPTZ` | `DATETIME` (UTC) |
+| `JSONB` | `JSON` |
+| `ARRAY` | Не поддерживается напрямую (требуется сериализация в JSON) |
+| `UUID` | `CHAR(36)` |
+
+**Вывод:** CDC (Debezium) — самый надёжный способ для high-load систем. Облачные DMS (AWS DMS, Google DMS) — для миграции внутри одного облака. Маппинг типов зависит от целевой СУБД.
+
+### 18. Online Schema Change и миграция с минимальным downtime
+
+**Проблема:** `ALTER TABLE` на большой таблице (10+ млн строк) приводит к длительной блокировке и простою.
+
+**Online schema change** — это изменение схемы без блокировки (или с короткой блокировкой).
+
+**Инструменты:**
+1. **gh-ost** (GitHub): копирует данные в новую таблицу, затем выполняет cutover через `RENAME` (короткая блокировка ~100 мс).
+2. **pt-online-schema-change** (Percona): использует триггеры для копирования данных, затем cutover через `RENAME`.
+
+**Batch migration:**
 ```sql
--- Step 1: Expand (add new column):
-ALTER TABLE orders ADD COLUMN total DECIMAL(10,2);
-
--- Step 2: Backfill (copy data):
-UPDATE orders SET total = amount;
-
--- Step 3: Code (use new column):
--- App code now uses total instead of amount
-
--- Step 4: Contract (drop old column):
-ALTER TABLE orders DROP COLUMN amount;
-```
-
-**Dual-write**:
-```java
-// Write to both:
-orderRepo.save(order);  // Old table
-orderRepoV2.save(order);  // New table
-```
-
-**Вывод**: **data migration** → **expand-contract** (add, backfill, drop), **dual-write** (write to both), **CDC** (Debezium). **Consistency**: **backfill** + **dual-write** (temporary).
-
-### 17. Как мигрировать данные в real-time (CDC)
-
-**CDC** (Change Data Capture) = **захват** **изменений** **в real-time**.
-
-**Debezium**:
-```yaml
-# Kafka Connect:
-name: postgres-cdc
-config:
-  connector.class: io.debezium.connector.postgresql.PostgresConnector
-  database.hostname: localhost
-  database.port: 5432
-  database.user: debezium
-  database.password: dbz
-  database.dbname: mydb
-  database.server.name: mydb
-  topic.prefix: mydb
-```
-
-**Flow**:
-```
-PostgreSQL (WAL) → Debezium (Kafka Connect) → Kafka topic → Consumer → New DB
-```
-
-**Use cases**:
-- **Database migration** (PostgreSQL → MySQL)
-- **Cache invalidation** (CDC → Redis)
-- **Search indexing** (CDC → Elasticsearch)
-- **Data lake** (CDC → S3)
-
-**Вывод**: **CDC** = **захват** **изменений** **в real-time**. **Debezium**: **PostgreSQL** (WAL) → **Kafka** → **Consumer**. **Use cases**: **migration**, **cache invalidation**, **search indexing**, **data lake**.
-
-### 18. Как мигрировать данные с минимальным downtime
-
-**Проблема:** **data migration** (миллионы **rows**) → **downtime**.
-
-**Подходы**:
-1. **Online schema change** (gh-ost, pt-online-schema-change).
-2. **Batch migration** (по **chunks**).
-3. **CDC** (Debezium) — **real-time**.
-
-**Batch migration**:
-```sql
--- Migrate in batches:
-INSERT INTO new_table (SELECT * FROM old_table WHERE id BETWEEN 1 AND 1000);
-INSERT INTO new_table (SELECT * FROM old_table WHERE id BETWEEN 1001 AND 2000);
+-- Миграция по батчам:
+INSERT INTO new_table
+SELECT * FROM old_table WHERE id BETWEEN 1 AND 1000;
+INSERT INTO new_table
+SELECT * FROM old_table WHERE id BETWEEN 1001 AND 2000;
 -- ...
 ```
 
-**Cutover**:
+**Cutover (короткий downtime):**
 ```sql
--- Switch traffic (short downtime):
+-- Переключение трафика:
 BEGIN;
 RENAME TABLE old_table TO old_table_backup;
 RENAME TABLE new_table TO old_table;
 COMMIT;
 ```
 
-**Вывод**: **data migration** (минимальный **downtime**) → **online schema change** (gh-ost), **batch migration** (chunks), **CDC** (Debezium). **Cutover**: **rename** (short downtime).
+**Вывод:** online schema change (gh-ost, pt-online-schema-change) — для изменения схемы без блокировки. Batch migration — для миграции данных по батчам. Cutover через `RENAME` — короткий downtime (~100 мс).
 
-### 19. Как мигрировать данные между облачными СУБД
+### 19. Специфичные нюансы для PostgreSQL и Spring Boot
 
-**Проблема:** **migration** между **облачными** **СУБД** (RDS → Aurora, Cloud SQL → Spanner).
-
-**Инструменты**:
-- **AWS DMS** (Database Migration Service)
-- **Google DMS** (Database Migration Service)
-- **Azure DMS** (Database Migration Service)
-- **Debezium** (CDC)
-
-**AWS DMS**:
-```yaml
-# AWS DMS:
-# 1. Create replication instance
-# 2. Create source endpoint (RDS)
-# 3. Create target endpoint (Aurora)
-# 4. Create replication task
-# 5. Start migration
-```
-
-**Flow**:
-```
-RDS (source) → AWS DMS → Aurora (target)
-```
-
-**Вывод**: **migration** между **облачными** **СУБД** → **AWS DMS**, **Google DMS**, **Azure DMS**, **Debezium**. **Flow**: **source** → **DMS** → **target**.
-
-### 20. Как мигрировать данные с проверкой целостности
-
-**Проблема:** **data migration** → **data** могла **повредиться** (NULL, **type cast**).
-
-**Проверки**:
-1. **Count check** — **rows** до и после.
-2. **Checksum** — **MD5/SHA** по **rows**.
-3. **Aggregate** — **SUM**, **AVG**, **MIN**, **MAX**.
-4. **Referential integrity** — **FK**.
-
-**Пример**:
+**PostgreSQL Zero-Downtime Indexing:**
+Стандартный `CREATE INDEX` блокирует таблицу на запись (`ShareLock`). Для больших таблиц в продакшене **всегда** используйте:
 ```sql
--- Before migration:
-SELECT COUNT(*), SUM(amount) FROM orders;
--- Count: 1000000, Sum: 50000000
+CREATE INDEX CONCURRENTLY idx_orders_user_id ON orders (user_id);
+```
+*Примечание:* `CONCURRENTLY` нельзя выполнять внутри транзакционного блока (`BEGIN ... COMMIT`). Flyway по умолчанию выполняет каждую миграцию в транзакции. Чтобы отключить это для конкретного файла, добавьте в его начало: `-- flyway.executeInTransaction=false`.
 
--- Migration:
-ALTER TABLE orders RENAME COLUMN amount TO total;
-
--- After migration:
-SELECT COUNT(*), SUM(total) FROM orders;
--- Count: 1000000, Sum: 50000000  (OK)
+**Кастомизация Flyway в Spring Boot:**
+Если требуется нестандартная логика (например, `clean` перед `migrate` в тестах или работа с multi-tenant схемами), реализуйте бин `FlywayMigrationStrategy`:
+```java
+@Configuration
+public class FlywayConfig {
+    @Bean
+    public FlywayMigrationStrategy cleanMigrateStrategy() {
+        return flyway -> {
+            flyway.clean();    // Очистка (только для dev/test!)
+            flyway.migrate();
+        };
+    }
+}
 ```
 
-**Automated**:
-- **Deequ** (Spark)
-- **Great Expectations** (Python)
-- **dbt tests** (SQL)
-
-**Вывод**: **data migration** → **count check**, **checksum**, **aggregate**, **referential integrity**. **Automated**: **Deequ**, **Great Expectations**, **dbt tests**.
+**Идемпотентность скриптов:**
+Всегда используйте `IF NOT EXISTS` и `IF EXISTS`, чтобы скрипты могли безопасно выполняться повторно при сбоях пайплайна:
+```sql
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(20);
+DROP INDEX IF EXISTS idx_old_users;
+```
