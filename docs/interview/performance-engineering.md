@@ -2,14 +2,14 @@
 
 ### 1. JMH: microbenchmarking, @Benchmark, @State, @Measurement, @Fork
 
-**JMH (Java Microbenchmark Harness)** — **стандарт** для **микро-бенчмаркинга** в Java. **Учитывает** **JIT** (warmup, **оптимизация**), **измеряет** **точное** **время** **выполнения**.
+JMH (Java Microbenchmark Harness) — стандарт для микро-бенчмаркинга в Java. Учитывает JIT (warmup, оптимизация), измеряет точное время выполнения.
 
-**Почему JMH, а не `System.nanoTime()`**:
-- **JIT** **оптимизирует** **код** при **повторном** **выполнении** (warmup).
-- **Dead code elimination**: **неиспользуемый** **код** **удаляется** **JIT** (без JMH **результат** **неверен**).
-- **Constant folding**: **константные** **вычисления** **вычислены** **заранее**.
+Почему JMH, а не `System.nanoTime()`:
+- **JIT** оптимизирует код при повторном выполнении (warmup).
+- **Dead code elimination**: неиспользуемый код удаляется JIT (без JMH результат неверен).
+- **Constant folding**: константные вычисления вычислены заранее.
 
-**Аннотации**:
+Аннотации:
 ```java
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
@@ -45,15 +45,15 @@ public class CollectionBenchmark {
 }
 ```
 
-**Параметры**:
-- **`@BenchmarkMode`**: **AverageTime** (среднее время), **Throughput** (операций/сек), **SampleTime** (распределение).
-- **`@State(Scope.Benchmark)`**: **состояние** на **весь** **бенчмарк** (все **итерации**).
-- **`@State(Scope.Thread)`**: **состояние** на **каждый** **поток**.
-- **`@Warmup(iterations, time)`**: **разогрев** (JIT **оптимизация**, **не** **считается** в **результат**).
-- **`@Measurement(iterations, time)`**: **замер** (считается в **результат**).
-- **`@Fork(n)`**: **n** **JVM-процессов** (каждый **с** **своим** **JIT**, **результат** **среднее**).
+Параметры:
+- **`@BenchmarkMode`**: AverageTime (среднее время), Throughput (операций/сек), SampleTime (распределение).
+- **`@State(Scope.Benchmark)`**: состояние на весь бенчмарк (все итерации).
+- **`@State(Scope.Thread)`**: состояние на каждый поток.
+- **`@Warmup(iterations, time)`**: разогрев (JIT оптимизация, не считается в результат).
+- **`@Measurement(iterations, time)`**: замер (считается в результат).
+- **`@Fork(n)`**: n JVM-процессов (каждый с своим JIT, результат среднее).
 
-**Запуск**:
+Запуск:
 ```bash
 # Maven:
 mvn clean package
@@ -63,21 +63,21 @@ java -jar target/benchmarks.jar
 java -jar target/benchmarks.jar -f 3 -wi 5 -i 10 -w 1s -m 1s
 ```
 
-**Типовые ошибки**:
-- **Нет warmup** → **JIT** **не** **оптимизировал** → **завышенный** **результат**.
-- **Нет `@State`** → **создание** **объектов** **в** **каждой** **итерации** → **не** **та** **нагрузка**.
-- **Результат** **не** **используется** → **dead code elimination** → **0 нс**.
-- **Один fork** → **случайность** **JIT** → **нужно** **3+ forks**.
+Типовые ошибки:
+- **Нет warmup** → JIT не оптимизировал → завышенный результат.
+- **Нет `@State`** → создание объектов в каждой итерации → не та нагрузка.
+- **Результат** не используется → dead code elimination → 0 нс.
+- **Один fork** → случайность JIT → нужно 3+ forks.
 
 ### 2. Типичные ошибки бенчмаркинга: JIT warmup, DCE, constant folding
 
-**1. JIT Warmup**:
-- **JIT** **компилирует** **горячий** **код** после **10 000–50 000** **вызовов** (C1 → C2).
-- **Без warmup**: **интерпретатор** **выполняет** → **медленно** (10–100x).
-- **Решение**: **`@Warmup(iterations = 5, time = 1)`** (5 итераций по 1 сек).
+1. JIT Warmup:
+- **JIT** компилирует горячий код после 10 000–50 000 вызовов (C1 → C2).
+- **Без warmup**: интерпретатор выполняет → медленно (10–100x).
+- **Решение**: `@Warmup(iterations = 5, time = 1)` (5 итераций по 1 сек).
 
-**2. Dead Code Elimination (DCE)**:
-- **JIT** **удаляет** **код**, **результат** **которого** **не** **используется**.
+2. Dead Code Elimination (DCE):
+- **JIT** удаляет код, результат которого не используется.
 - **Пример**:
 ```java
 @Benchmark
@@ -85,7 +85,7 @@ public void badBenchmark(List<String> list) {
     list.add("item");  // JIT: результат не используется → удалить
 }
 ```
-- **Решение**: **результат** **использовать** (вернуть, **записать** в **volatile**).
+- **Решение**: результат использовать (вернуть, записать в volatile).
 ```java
 private volatile String sink;
 
@@ -96,8 +96,8 @@ public String goodBenchmark(List<String> list) {
 }
 ```
 
-**3. Constant Folding**:
-- **JIT** **вычисляет** **константные** **выражения** **заранее**.
+3. Constant Folding:
+- **JIT** вычисляет константные выражения заранее.
 - **Пример**:
 ```java
 @Benchmark
@@ -105,7 +105,7 @@ public int badMath() {
     return 2 + 2;  // JIT: 4 (вычислено при компиляции)
 }
 ```
-- **Решение**: **переменные** (не **константы**).
+- **Решение**: переменные (не константы).
 ```java
 @Benchmark
 public int goodMath(int a, int b) {
@@ -113,38 +113,38 @@ public int goodMath(int a, int b) {
 }
 ```
 
-**4. Loop Unrolling**:
-- **JIT** **разворачивает** **циклы** (4 итерации **в** **1**).
-- **Влияет** на **результат** (быстрее, **но** **больше** **памяти**).
-- **Учитывать** при **анализе** **результата**.
+4. Loop Unrolling:
+- **JIT** разворачивает циклы (4 итерации в 1).
+- **Влияет** на результат (быстрее, но больше памяти).
+- **Учитывать** при анализе результата.
 
-**5. GC Noise**:
-- **GC** **паузы** **искажают** **замер**.
-- **Решение**: **`@Fork(3)`** (среднее по 3 JVM), **большие** **итерации** (сглаживание).
+5. GC Noise:
+- **GC** паузы искажают замер.
+- **Решение**: `@Fork(3)` (среднее по 3 JVM), большие итерации (сглаживание).
 
-**6. Неправильный Scope**:
-- **`@State(Scope.Benchmark)`**: **создание** **один** **раз** на **все** **итерации**.
-- **`@State(Scope.Thread)`**: **создание** **на** **каждый** **поток**.
-- **`@State(Scope.Group)`**: **создание** **на** **группу** **потоков**.
-- **Ошибка**: **неверный** **scope** → **не** **та** **нагрузка**.
+6. Неправильный Scope:
+- **`@State(Scope.Benchmark)`**: создание один раз на все итерации.
+- **`@State(Scope.Thread)`**: создание на каждый поток.
+- **`@State(Scope.Group)`**: создание на группу потоков.
+- **Ошибка**: неверный scope → не та нагрузка.
 
-**7. Warmup per Fork**:
-- **Каждый** **fork** (JVM) **имеет** **свой** **JIT** → **warmup** **для** **каждого**.
-- **`@Warmup`** **применяется** **к** **каждому** **fork** (не **один** **раз**).
+7. Warmup per Fork:
+- **Каждый** fork (JVM) имеет свой JIT → warmup для каждого.
+- **`@Warmup`** применяется к каждому fork (не один раз).
 
-**Best practice**:
-- **3+ forks**, **5+ warmup iterations**, **10+ measurement iterations**.
-- **Результат** **использовать** (не **DCE**).
-- **Переменные** (не **константы**).
-- **Проверить** **результат** **на** **разных** **JVM** (OpenJDK, GraalVM).
+**Лучшая практика**:
+- **3+ forks**, 5+ warmup iterations, 10+ measurement iterations.
+- **Результат** использовать (не DCE).
+- **Переменные** (не константы).
+- **Проверить** результат на разных JVM (OpenJDK, GraalVM).
 
 ### 3. Load testing: Gatling, k6, JMeter — когда что
 
-**Gatling**:
-- **Язык**: **Scala** (DSL).
-- **Плюс**: **просто** **писать** **сценарии**, **хорошие** **отчёты**, **распределённый** **режим**.
-- **Минус**: **Scala** (не **все** **знают**), **медленнее** **JMeter**.
-- **Use case**: **API** **load testing** (REST, gRPC), **CI/CD**.
+Gatling:
+- **Язык**: Scala (DSL).
+- **Плюс**: просто писать сценарии, хорошие отчёты, распределённый режим.
+- **Минус**: Scala (не все знают), медленнее JMeter.
+- **Сценарии применения**: API load testing (REST, gRPC), CI/CD.
 
 ```scala
 import io.gatling.core.Predef._
@@ -165,11 +165,11 @@ class OrderSimulation extends Simulation {
 }
 ```
 
-**k6**:
-- **Язык**: **JavaScript**.
-- **Плюс**: **просто** (JS), **быстро**, **распределённый** (cloud), **GraphQL** **поддержка**.
-- **Минус**: **меньше** **интеграций** (vs JMeter).
-- **Use case**: **API** **load testing**, **CI/CD** (Graffana Cloud k6).
+k6:
+- **Язык**: JavaScript.
+- **Плюс**: просто (JS), быстро, распределённый (cloud), GraphQL поддержка.
+- **Минус**: меньше интеграций (vs JMeter).
+- **Сценарии применения**: API load testing, CI/CD (Grafana Cloud k6).
 
 ```javascript
 import http from 'k6/http';
@@ -190,57 +190,57 @@ export default function() {
 }
 ```
 
-**JMeter**:
-- **Язык**: **GUI** (Java).
-- **Плюс**: **GUI** (не **нужно** **писать** **код**), **огромная** **экосистема** **плагинов**, **распределённый**.
-- **Минус**: **GUI** **медленный** (для **больших** **тестов**), **сложно** **версионировать** (XML).
-- **Use case**: **компании** **без** **DevOps** (GUI), **legacy** (JMeter **файлы**).
+JMeter:
+- **Язык**: GUI (Java).
+- **Плюс**: GUI (не нужно писать код), огромная экосистема плагинов, распределённый.
+- **Минус**: GUI медленный (для больших тестов), сложно версионировать (XML).
+- **Сценарии применения**: компании без DevOps (GUI), legacy (JMeter файлы).
 
-**Сравнение**:
+Сравнение:
 | | Gatling | k6 | JMeter |
 |---|---|---|---|
-| **Язык** | Scala | JavaScript | GUI (Java) |
-| **Скорость** | Высокая | Высокая | Средняя |
-| **CI/CD** | Хорошо | Отлично | Плохо (GUI) |
-| **Распределённый** | Да | Да (cloud) | Да |
-| **Отчёты** | HTML | HTML + Grafana | HTML |
-| **Выбор** | Scala-команды | JS-команды | Legacy |
+| Язык | Scala | JavaScript | GUI (Java) |
+| Скорость | Высокая | Высокая | Средняя |
+| CI/CD | Хорошо | Отлично | Плохо (GUI) |
+| Распределённый | Да | Да (cloud) | Да |
+| Отчёты | HTML | HTML + Grafana | HTML |
+| Выбор | Scala-команды | JS-команды | Legacy |
 
-**Когда что**:
-- **Gatling**: **Scala** **команда**, **API** **load testing**, **распределённый**.
-- **k6**: **JS** **команда**, **CI/CD** (Grafana Cloud), **быстрый** **старт**.
-- **JMeter**: **legacy**, **GUI** (не **нужно** **кодировать**), **огромные** **тесты** (10K+ VU).
+Когда что:
+- **Gatling**: Scala команда, API load testing, распределённый.
+- **k6**: JS команда, CI/CD (Grafana Cloud), быстрый старт.
+- **JMeter**: legacy, GUI (не нужно кодировать), огромные тесты (10K+ VU).
 
 ### 4. Profiling workflow: identify → measure → optimize → verify
 
-**Workflow** **оптимизации** **производительности**:
+Workflow оптимизации производительности:
 
-**1. Identify** (найти **проблему**):
-- **Метрики**: **p95/p99** **latency** **вырос** (Grafana, Prometheus).
-- **Алерты**: **SLO** **нарушено** (error rate > 5%, p95 > 1s).
-- **Traces**: **медленный** **span** (Jaeger, Tempo).
-- **Логи**: **WARN/ERROR** (timeout, slow query).
+1. Identify (найти проблему):
+- **Метрики**: p95/p99 latency вырос (Grafana, Prometheus).
+- **Алерты**: SLO нарушено (error rate > 5%, p95 > 1s).
+- **Traces**: медленный span (Jaeger, Tempo).
+- **Логи**: WARN/ERROR (timeout, slow query).
 
-**2. Measure** (измерить):
-- **JFR** (Java Flight Recorder): **CPU**, **GC**, **allocation**, **lock** (60 сек).
-- **async-profiler**: **flame graph** (CPU, allocation, lock).
-- **Thread dump**: **deadlock**, **BLOCKED** **потоки**.
-- **DB**: **EXPLAIN ANALYZE** (план запроса), **pg_stat_statements** (топ медленных).
+2. Measure (измерить):
+- **JFR** (Java Flight Recorder): CPU, GC, allocation, lock (60 сек).
+- **async-profiler**: flame graph (CPU, allocation, lock).
+- **Thread dump**: deadlock, BLOCKED потоки.
+- **DB**: EXPLAIN ANALYZE (план запроса), pg_stat_statements (топ медленных).
 
-**3. Optimize** (оптимизировать):
-- **CPU**: **оптимизировать** **алгоритм** (O(n²) → O(n log n)), **инлайн** **методы**, **предварительное** **вычисление**.
-- **GC**: **уменьшить** **allocation** (object pooling, **периситивные** **коллекции**), **настроить** **GC** (G1, ZGC).
-- **Lock**: **уменьшить** **критическую** **секцию**, **lock-free** **структуры** (ConcurrentHashMap).
-- **DB**: **индексы**, **объединить** **запросы** (JOIN), **кэширование** (Redis).
-- **Сеть**: **batching** (один запрос вместо N), **compression** (gzip).
+3. Optimize (оптимизировать):
+- **CPU**: оптимизировать алгоритм (O(n²) → O(n log n)), инлайн методы, предварительное вычисление.
+- **GC**: уменьшить allocation (object pooling, примитивные коллекции), настроить GC (G1, ZGC).
+- **Lock**: уменьшить критическую секцию, lock-free структуры (ConcurrentHashMap).
+- **DB**: индексы, объединить запросы (JOIN), кэширование (Redis).
+- **Сеть**: batching (один запрос вместо N), compression (gzip).
 
-**4. Verify** (проверить):
-- **Повторить** **бенчмарк** (JMH, load test).
-- **Сравнить** **метрики** (p95 **до** **и** **после**).
-- **Проверить** **SLO** (error rate, p95).
-- **Deploy** **в** **staging** → **load test** → **deploy** **в** **prod** (canary).
+4. Verify (проверить):
+- **Повторить** бенчмарк (JMH, load test).
+- **Сравнить** метрики (p95 до и после).
+- **Проверить** SLO (error rate, p95).
+- **Deploy** в staging → load test → deploy в prod (canary).
 
-**Пример**:
+Пример:
 ```
 1. Identify: p95 latency /orders вырос с 200ms до 2s
 2. Measure: JFR → 80% CPU в OrderService.getTotal()
@@ -252,35 +252,35 @@ export default function() {
 4. Verify: p95 latency → 250ms (было 2s), SLO OK
 ```
 
-**Типовые ошибки**:
-- **Оптимизировать** **без** **измерения** (угадывание).
-- **Микро-оптимизация** (не **узкое** **место**).
-- **Не** **проверить** **в** **prod** (staging **не** **та** **нагрузка**).
-- **Оптимизировать** **всё** **сразу** (нужно **по** **одному** **изменению**).
+Типовые ошибки:
+- **Оптимизировать** без измерения (угадывание).
+- **Микро-оптимизация** (не узкое место).
+- **Не** проверить в prod (staging не та нагрузка).
+- **Оптимизировать** всё сразу (нужно по одному изменению).
 
 ### 5. JVM tuning: ergonomics, adaptive sizing, GC selection
 
-**Ergonomics** (автоматические **настройки** JVM):
-- **Java 8+**: **JVM** **автоматически** **выбирает** **GC**, **размер** **heap**, **параметры**.
-- **`-XX:+UseContainerSupport`** (Java 10+): **JVM** **видит** **container** **limits** (Docker, K8s).
-- **`-XX:MaxRAMPercentage=75.0`**: **heap** = **75%** **памяти** **контейнера**.
+Ergonomics (автоматические настройки JVM):
+- **Java 8+**: JVM автоматически выбирает GC, размер heap, параметры.
+- **`-XX:+UseContainerSupport`** (Java 10+): JVM видит container limits (Docker, K8s).
+- **`-XX:MaxRAMPercentage=75.0`**: heap = 75% памяти контейнера.
 
-**Adaptive Sizing**:
-- **G1 GC**: **адаптивно** **меняет** **размер** **regions** (young/old) под **нагрузку**.
-- **ZGC** (Java 15+): **адаптивно** **перемещает** **объекты** (sub-millisecond pauses).
-- **Epsilon** (Java 14+): **не** **собирает** **мусор** (для **short-lived** **приложений**).
+Adaptive Sizing:
+- **G1 GC**: адаптивно меняет размер regions (young/old) под нагрузку.
+- **ZGC** (Java 15+): адаптивно перемещает объекты (sub-millisecond pauses).
+- **Epsilon** (Java 14+): не собирает мусор (для short-lived приложений).
 
-**GC Selection**:
-| GC | Pauses | Throughput | Use case |
+GC Selection:
+| GC | Pauses | Throughput | Сценарии |
 |---|---|---|---|
-| **G1** (default Java 9+) | 10–100 мс | Средний | **Большинство** **приложений** |
-| **ZGC** (Java 15+) | < 1 мс | Средний | **Низкий** **latency** (финансы, real-time) |
-| **Shenandoah** | < 1 мс | Средний | **Низкий** **latency** (аналог ZGC) |
-| **Parallel** | 100–1000 мс | Высокий | **Высокий** **throughput** (batch, offline) |
-| **Serial** | 100–1000 мс | Низкий | **Один** **CPU**, **мало** **памяти** (CLI) |
-| **Epsilon** | 0 | Нет GC | **Short-lived** (serverless, CLI) |
+| G1 (default Java 9+) | 10–100 мс | Средний | Большинство приложений |
+| ZGC (Java 15+) | < 1 мс | Средний | Низкий latency (финансы, real-time) |
+| Shenandoah | < 1 мс | Средний | Низкий latency (аналог ZGC) |
+| Parallel | 100–1000 мс | Высокий | Высокий throughput (batch, offline) |
+| Serial | 100–1000 мс | Низкий | Один CPU, мало памяти (CLI) |
+| Epsilon | 0 | Нет GC | Short-lived (serverless, CLI) |
 
-**Настройка**:
+Настройка:
 ```bash
 # G1 (default):
 java -XX:+UseG1GC -Xmx4g -Xms4g -jar app.jar
@@ -295,19 +295,19 @@ java -XX:+UseParallelGC -Xmx4g -jar app.jar
 java -XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -jar app.jar
 ```
 
-**Типовые проблемы**:
-- **GC pause** > **500 мс** → **выбрать** **ZGC** или **увеличить** **heap**.
-- **Много** **Young GC** → **много** **короткоживущих** **объектов** → **оптимизировать** **allocation**.
-- **Full GC** **часто** → **Old Gen** **заполнен** (утечка) → **heap dump** + **MAT**.
-- **Metaspace** **растёт** → **classloader** **leak** → **проверить** **динамические** **прокси**.
+Типовые проблемы:
+- **GC pause** > 500 мс → выбрать ZGC или увеличить heap.
+- **Много** Young GC → много короткоживущих объектов → оптимизировать allocation.
+- **Full GC** часто → Old Gen заполнен (утечка) → heap dump + MAT.
+- **Metaspace** растёт → classloader leak → проверить динамические прокси.
 
 ### 6. Database performance: query optimization, connection pooling, indexing
 
-**Query Optimization**:
-- **EXPLAIN ANALYZE**: **план** **запроса** (Seq Scan vs Index Scan, **время** **выполнения**).
-- **Индексы**: **по** **колонкам** **в** **WHERE**, **JOIN**, **ORDER BY**.
-- **N+1**: **N** **запросов** **вместо** **1** (JOIN, **fetch** **join**).
-- **SELECT \***: **нужные** **колонки** (меньше **данных**).
+Query Optimization:
+- **EXPLAIN ANALYZE**: план запроса (Seq Scan vs Index Scan, время выполнения).
+- **Индексы**: по колонкам в WHERE, JOIN, ORDER BY.
+- **N+1**: N запросов вместо 1 (JOIN, fetch join).
+- **SELECT \***: нужные колонки (меньше данных).
 
 ```sql
 -- До (N+1): 1 запрос на orders + N запросов на items
@@ -321,10 +321,10 @@ JOIN items i ON o.id = i.order_id
 WHERE o.user_id = 1;
 ```
 
-**Connection Pooling**:
-- **HikariCP** (default Spring Boot): **быстрый**, **лёгкий** (10K+ connections/sec, соединений в секунду).
-- **Параметры**: **maximumPoolSize** (10–50), **minimumIdle** (5–10), **connectionTimeout** (30 сек).
-- **Проблема**: **мало connections** (соединений) → **очередь**, **много** → **давление** **на** **БД**.
+Connection Pooling:
+- **HikariCP** (default Spring Boot): быстрый, лёгкий (10K+ connections/sec, соединений в секунду).
+- **Параметры**: maximumPoolSize (10–50), minimumIdle (5–10), connectionTimeout (30 сек).
+- **Проблема**: мало connections (соединений) → очередь, много → давление на БД.
 
 ```yaml
 spring:
@@ -336,12 +336,12 @@ spring:
       max-lifetime: 1800000  # 30 мин
 ```
 
-**Indexing Strategies**:
-- **B-Tree** (default): **точечный** **поиск**, **диапазон**.
-- **GIN**: **JSONB**, **full-text** **search**.
-- **GiST**: **гео**, **range** **типы**.
-- **BRIN**: **большие** **таблицы** (**последовательные** **данные**, **log**).
-- **Partial**: **WHERE** **условие** (например, **active** **заказы**).
+Indexing Strategies:
+- **B-Tree** (default): точечный поиск, диапазон.
+- **GIN**: JSONB, full-text search.
+- **GiST**: гео, range типы.
+- **BRIN**: большие таблицы (последовательные данные, log).
+- **Partial**: WHERE условие (например, active заказы).
 
 ```sql
 -- B-Tree (default):
@@ -354,17 +354,17 @@ CREATE INDEX idx_metadata ON orders USING GIN(metadata);
 CREATE INDEX idx_active_orders ON orders(user_id) WHERE status = 'ACTIVE';
 ```
 
-**Мониторинг**:
-- **pg_stat_statements**: **топ** **медленных** **запросов**.
-- **pg_stat_user_tables**: **bloat**, **index** **usage**.
-- **Медленные запросы**: **EXPLAIN ANALYZE** + **индексы**.
+Мониторинг:
+- **pg_stat_statements**: топ медленных запросов.
+- **pg_stat_user_tables**: bloat, index usage.
+- **Медленные запросы**: EXPLAIN ANALYZE + индексы.
 
 ### 7. Network performance: compression, batching, connection reuse
 
-**Compression**:
-- **gzip/deflate**: **текстовые** **данные** (JSON, HTML) **сжимаются** на **70–90%**.
-- **В Spring**: **`server.compression.enabled=true`** (Tomcat).
-- **Когда**: **ответ** > **1 КБ** (иначе **compression** **медленнее**).
+Compression:
+- **gzip/deflate**: текстовые данные (JSON, HTML) сжимаются на 70–90%.
+- **В Spring**: `server.compression.enabled=true` (Tomcat).
+- **Когда**: ответ > 1 КБ (иначе compression медленнее).
 
 ```yaml
 server:
@@ -374,10 +374,10 @@ server:
     mime-types: application/json,text/html,text/plain
 ```
 
-**Batching**:
-- **Один** **запрос** **вместо** **N** (меньше **round-trips**).
-- **Пример**: **загрузка** **100** **пользователей** → **один** **запрос** `WHERE id IN (1,2,...,100)` **вместо** **100** **запросов**.
-- **Kafka**: **batch** **producer** (`batch.size`, `linger.ms`) → **меньше** **сетевых** **вызовов**.
+Batching:
+- **Один** запрос вместо N (меньше round-trips).
+- **Пример**: загрузка 100 пользователей → один запрос `WHERE id IN (1,2,...,100)` вместо 100 запросов.
+- **Kafka**: batch producer (`batch.size`, `linger.ms`) → меньше сетевых вызовов.
 
 ```java
 // До (N запросов):
@@ -389,10 +389,10 @@ for (Long id : ids) {
 List<User> users = repo.findAllById(ids);  // 1 round-trip
 ```
 
-**Connection Reuse**:
-- **HTTP Keep-Alive**: **соединение** **используется** **повторно** (без **TCP handshake**).
-- **HTTP/2**: **multiplexing** (N **запросов** **на** **одном** **соединении**).
-- **Connection Pooling** (HttpClient, WebClient): **пул** **соединений** (не **создавать** **новое** **на** **каждый** **запрос**).
+Connection Reuse:
+- **HTTP Keep-Alive**: соединение используется повторно (без TCP handshake).
+- **HTTP/2**: multiplexing (N запросов на одном соединении).
+- **Connection Pooling** (HttpClient, WebClient): пул соединений (не создавать новое на каждый запрос).
 
 ```java
 // WebClient (connection pooling):
@@ -405,22 +405,22 @@ WebClient client = WebClient.builder()
     .build();
 ```
 
-**TCP Tuning** (Linux):
-- **`net.core.somaxconn`**: **максимум** **соединений** **в** **backlog** (128 → 1024).
-- **`net.ipv4.tcp_max_syn_backlog`**: **SYN** **backlog** (128 → 1024).
-- **`net.ipv4.tcp_tw_reuse`**: **переиспользование** **TIME_WAIT** **соединений**.
+TCP Tuning (Linux):
+- **`net.core.somaxconn`**: максимум соединений в backlog (128 → 1024).
+- **`net.ipv4.tcp_max_syn_backlog`**: SYN backlog (128 → 1024).
+- **`net.ipv4.tcp_tw_reuse`**: переиспользование TIME_WAIT соединений.
 
-**Мониторинг**:
-- **Netty** **metrics**: **active** **connections** (активные соединения), **pending** (в очереди).
-- **TCP** **connections** (соединения): **`ss -s`** (Linux), **`netstat`**.
-- **Latency**: **p95/p99** **network** **round-trip**.
+Мониторинг:
+- **Netty** metrics: active connections (активные соединения), pending (в очереди).
+- **TCP** connections (соединения): `ss -s` (Linux), `netstat`.
+- **Latency**: p95/p99 network round-trip.
 
 ### 8. Memory optimization: object pooling, primitive collections, off-heap
 
-**Object Pooling**:
-- **Переиспользование** **объектов** **вместо** **создания** **новых** (меньше **allocation**, **GC** **паузы**).
-- **Когда**: **дорогие** **объекты** (DB **connection**, **Buffer**, **StringBuilder**).
-- **Пример**: **Apache Commons Pool**, **HikariCP** (connection pool).
+Object Pooling:
+- **Переиспользование** объектов вместо создания новых (меньше allocation, GC паузы).
+- **Когда**: дорогие объекты (DB connection, Buffer, StringBuilder).
+- **Пример**: Apache Commons Pool, HikariCP (connection pool).
 
 ```java
 // Connection pool (HikariCP):
@@ -434,11 +434,11 @@ try (Connection conn = ds.getConnection()) {
 }  // conn возвращается в pool
 ```
 
-**Primitive Collections**:
-- **`Map<String, Integer>`** → **`Int2ObjectOpenHashMap`** (Eclipse Collections) — **без** **autoboxing**.
-- **`List<Long>`** → **`LongArrayList`** — **примитивы**, **без** **объектов**.
-- **Плюс**: **меньше** **память** (8 байт на **long** vs 16+ на **Long** **объект**).
-- **Минус**: **меньше** **API** (не **все** **методы** **Collections**).
+Primitive Collections:
+- **`Map<String, Integer>`** → `Int2ObjectOpenHashMap` (Eclipse Collections) — без autoboxing.
+- **`List<Long>`** → `LongArrayList` — примитивы, без объектов.
+- **Плюс**: меньше память (8 байт на long vs 16+ на Long объект).
+- **Минус**: меньше API (не все методы Collections).
 
 ```java
 // До (autoboxing):
@@ -450,10 +450,10 @@ IntObjectOpenHashMap<String> map = new IntObjectOpenHashMap<>();
 map.put(42, "value");  // int (4 байта)
 ```
 
-**Off-Heap Memory**:
-- **DirectByteBuffer** (NIO): **память** **вне** **JVM heap** (не **собирается** **GC**).
-- **Когда**: **крупные** **буферы** (file I/O, **network** **buffers**, **Kafka** **producer**).
-- **Проблема**: **утечки** (не **собирается** **GC**, **нужно** **вручную** **освободить**).
+Off-Heap Memory:
+- **DirectByteBuffer** (NIO): память вне JVM heap (не собирается GC).
+- **Когда**: крупные буферы (file I/O, network buffers, Kafka producer).
+- **Проблема**: утечки (не собирается GC, нужно вручную освободить).
 
 ```java
 // DirectByteBuffer (off-heap):
@@ -462,21 +462,21 @@ ByteBuffer buffer = ByteBuffer.allocateDirect(1 << 20);  // 1 MB off-heap
 ((Cleanable) buffer).cleaner().clean();
 ```
 
-**Memory Optimization Checklist**:
-- [ ] **Object pooling** для **дорогих** **объектов** (connections, buffers).
-- [ ] **Primitive collections** (Eclipse Collections, Koloboke) **вместо** **autoboxing**.
-- [ ] **Off-heap** **для** **крупных** **буферов** (NIO, Kafka).
-- [ ] **String** **interning** **не** **использовать** (metaspace **растёт**).
-- [ ] **String** **вместо** **StringBuilder** **для** **коротких** **строк** (JIT **оптимизирует**).
-- [ ] **Monitor** **heap** (JFR, **Prometheus**).
+Memory Optimization Checklist:
+- [ ] Object pooling для дорогих объектов (connections, buffers).
+- [ ] Primitive collections (Eclipse Collections, Koloboke) вместо autoboxing.
+- [ ] Off-heap для крупных буферов (NIO, Kafka).
+- [ ] String interning не использовать (metaspace растёт).
+- [ ] String вместо StringBuilder для коротких строк (JIT оптимизирует).
+- [ ] Monitor heap (JFR, Prometheus).
 
 
 ### 9. GC tuning: как выбрать и настроить сборщик (G1, ZGC, Shenandoah)
 
 **Выбор GC:**
-- **G1** (Garbage-First, по умолчанию в Java 9+): **region-based** (heap разделён на regions, 1-32 MB), **mixed GC** (young + часть old), **pause target** (`-XX:MaxGCPauseMillis=200`). Подходит для большинства приложений (heap 4-64 GB).
-- **ZGC** (Java 15+, production): **concurrent** (почти все фазы concurrently с приложением), **pause < 1 ms** (не зависит от размера heap), **colored pointers** (метки в старших битах указателя). Подходит для больших heap (64 GB+) и low-latency.
-- **Shenandoah** (Red Hat, Java 11+): аналог ZGC (concurrent compaction, pause < 10 ms), но без colored pointers (uses forwarding pointers).
+- **G1** (Garbage-First, по умолчанию в Java 9+): region-based — heap разделён на регионы (1–32 MB), mixed GC (young + часть old), целевая pause (`-XX:MaxGCPauseMillis=200`). Подходит для большинства приложений (heap 4–64 GB).
+- **ZGC** (Java 15+, production): почти все фазы идут параллельно с приложением, pause < 1 ms (не зависит от размера heap), colored pointers (метки в старших битах указателя). Подходит для больших heap (64 GB+) и low-latency.
+- **Shenandoah** (Red Hat, Java 11+): аналог ZGC (concurrent compaction, pause < 10 ms), но без colored pointers — использует forwarding pointers.
 
 **Флаги (G1):**
 ```bash
@@ -497,8 +497,8 @@ ByteBuffer buffer = ByteBuffer.allocateDirect(1 << 20);  // 1 MB off-heap
 ```
 
 **Метрики для оценки:**
-- **Pause time** (средняя, p99): G1 = 20-200 ms, ZGC = < 1 ms.
-- **Throughput** (доля времени без GC): G1 = 95-99%, ZGC = 97-99%.
+- **Pause time** (средняя, p99): G1 = 20–200 ms, ZGC < 1 ms.
+- **Throughput** (доля времени без GC): G1 = 95–99%, ZGC = 97–99%.
 - **Heap usage** (после GC): если > 80% — нужно увеличить heap или оптимизировать объекты.
 - **Allocation rate** (MB/sec): если очень высокий — ищите объекты, создаваемые в hot path.
 
@@ -555,7 +555,7 @@ List<Order> findOrdersWithItems();
 ```
 Один SQL: `SELECT o.*, i.* FROM orders o JOIN items i ON o.id = i.order_id`.
 
-**2. EntityGraph (Java 35 / Hibernate):**
+**2. EntityGraph (Java SE / Hibernate / Hibernate):**
 ```java
 @EntityGraph(attributePaths = {"items", "customer"})
 Order findById(Long id);
@@ -597,7 +597,7 @@ logging.level.org.hibernate.SQL=DEBUG
 
 ### 12. Connection pooling (HikariCP): настройки и оптимизация
 
-**HikariCP** (по умолчанию в Spring Boot) — fastest JDBC pool.
+**HikariCP** (по умолчанию в Spring Boot) — самый быстрый JDBC-пул.
 
 **Ключевые параметры:**
 ```yaml
@@ -640,7 +640,7 @@ hikaricp_connections_timeout_total
 - **Waiting > 0** → не хватает соединений.
 - **Timeout** → пул исчерпан (увеличить или уменьшить load).
 
-**Anti-patterns:**
+**Антипаттерны:**
 - Пул на каждый сервис (да) vs общий пул (нет — contention).
 - Держать соединение долго (не завершать транзакцию) → блокирует пул.
 - `maximum-pool-size = 100` «на всякий случай» → DB падает.
@@ -695,7 +695,7 @@ CREATE INDEX idx_orders_user ON orders(user_id);
 | **Parse time** | 100% | 3-10× faster | 5-10× faster |
 | **Schema** | Нет (dynamic) | `.proto` (strong) | `.avsc` (strong) |
 | **Human-readable** | Да | Нет (binary) | Нет (binary) |
-| **Use case** | REST API, config | gRPC, high-throughput | Kafka, data pipelines |
+| **Сценарии** | REST API, config | gRPC, high-throughput | Kafka, data pipelines |
 
 **Когда что:**
 - **JSON**: REST API (external), config files, logging. Простота > скорость.
@@ -744,7 +744,7 @@ String result = sb.toString();  // 1 allocation
 **Когда string concatenation ок:**
 - **Мало итераций** (< 10): JIT оптимизирует (invokes StringBuilder).
 - **Короткая строка** (< 100 chars): overhead allocation мал.
-- **Rare path**: не hot code.
+- **Редкий путь выполнения**: не hot code.
 
 **Когда StringBuilder критичен:**
 - **Hot loop** (1000+ итераций).
@@ -871,7 +871,7 @@ jcmd <pid> JFR.dump filename=rec.jfr
 - **Serialization** (Jackson, Gson): 20-40% CPU в JSON-heavy приложениях.
 - **Regex** (Pattern, Matcher): если complex pattern в hot loop.
 - **String operations**: `split`, `replaceAll` (regex-based).
-- **Lock contention** (synchronized, ReentrantLock): `e lock` profile.
+- **Lock contention** (synchronized, ReentrantLock): профиль `-e lock`.
 
 **Оптимизация после profiling:**
 1. Найти топ-5 горячих методов.
@@ -920,7 +920,7 @@ jmap -dump:live,format=b,file=heap.hprof <pid>
 
 **Профилактика:**
 - **Unit tests** (memory): создать N объектов, проверить heap (JOL, Instrumentation).
-- **Integration tests**: load test (1 час), проверить heap trend.
+- **Интеграционные тесты**: load test (1 час), проверить heap trend.
 - **CI**: heap dump в CI (если OOM на load test).
 
 ### 19. I/O optimization: NIO, async I/O, virtual threads
@@ -1005,8 +1005,8 @@ try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
 
 **Как снизить p99:**
 1. **GC**: ZGC (pause < 1 ms) вместо G1 (200 ms).
-2. **Lock contention**: async-profiler (`e lock`), найти hot lock → уменьшить critical section, или lock-free (Atomic).
-3. **Cold cache**: **warmup** (startup: preload hot keys в Caffeine), **TTL jitter** (чтобы не все expired одновременно).
+2. **Lock contention**: async-profiler (`-e lock`), найти hot lock → уменьшить critical section, или lock-free (Atomic).
+3. **Cold cache**: прогрев (preload hot keys в Caffeine при старте), **TTL jitter** (чтобы кэш не истекал все ключи одновременно).
 4. **Batch**: 100 запросов → 1 batch (JDBC, HTTP).
 5. **Connection pool**: HikariCP (fast), проверить `waiting` (если > 0 — увеличить пул).
 6. **Async**: не блокировать request thread (CompletableFuture, reactive).
@@ -1024,7 +1024,7 @@ timer.record(() -> handleRequest());
 histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m]))
 ```
 
-**Follow-up:**
+**Вопросы интервьюера:**
 - «А как воспроизвести p99 проблему?» → **load test** (Gatling: 1000 users, 10 мин), замерить p99.
 - «А как оптимизировать tail?» → **hedged requests** (послать 2 запроса, взять первый ответ) — если p99.9 критичен.
 
@@ -1135,7 +1135,7 @@ try (var executor = Executors.newFixedThreadPool(100)) {
 - **Auto-instrumentation**: agent (Java agent) автоматически трекает HTTP, DB, messaging.
 - **Real User Monitoring (RUM)**: browser/mobile → latency, errors.
 - **Synthetic monitoring**: synthetic requests (каждые 1 мин) → uptime, latency.
-- **Cost**: дорого (per host, per GB). Для small team — **Grafana Stack** (Prometheus + Loki + Grafana, open-source).
+- **Стоимость**: дорого (за хост, за GB). Для малой команды — **Grafana Stack** (Prometheus + Loki + Grafana, open-source).
 
 **Что смотреть:**
 - **Service map** (зависимости между сервисами).
@@ -1195,7 +1195,7 @@ class ApiPerfTest extends Simulation {
 - **Throughput** > 1000 req/sec.
 - **GC pause p99** < 100 ms.
 
-**Follow-up:**
+**Вопросы интервьюера:**
 - «А как нагрузить production (без риска)?» → **canary** (10% traffic) + **monitoring** (auto-rollback при 5xx > 1%).
 - «А как воспроизвести production load в staging?» → **traffic replay** (Gore, tcpcopy) — записать production traffic, воспроизвести в staging.
 
@@ -1210,11 +1210,11 @@ java -jar app.jar --logging.level.org.springframework=DEBUG
 # или:
 -Dspring.boot.diagnostics.enabled=true
 ```
-**Стартапы:**
+**Что занимает время при старте:**
 - **Bean creation** (DI): 1000 beans × 10 ms = 10 сек.
-- **Class loading**: 5000 classes × 1 ms = 5 сек.
-- **DB connection**: 5 сек (network).
-- **Caching**: warmup (Redis, Elasticsearch).
+- **Class loading**: 5000 классов × 1 ms = 5 сек.
+- **DB connection**: 5 сек (сеть).
+- **Caching**: прогрев кэша (Redis, Elasticsearch).
 
 **Оптимизация:**
 1. **GraalVM Native Image** (AOT):
@@ -1241,7 +1241,7 @@ java -jar app.jar --logging.level.org.springframework=DEBUG
 - **Bean creation time** (Spring Boot diagnostics).
 - **First request latency** (если lazy init — first request медленнее).
 
-**Follow-up:**
+**Вопросы интервьюера:**
 - «А как GraalVM Native Image с Spring Boot 3?» → `@NativeImage` + `native-maven-plugin` + `build-native` profile.
 - «А как CDS в Kubernetes?» → InitContainer (создать archive) → main container (use archive).
 
@@ -1274,14 +1274,14 @@ buf.writeBytes(data);
 // Нет GC pressure (вне heap)
 ```
 
-**Trade-offs:**
+**Компромиссы:**
 - **Zero-copy**: быстрее (нет копирования), но complex (NIO, kernel features).
 - **Off-heap**: нет GC, но **memory leak** (нет GC для cleanup), complex (manual memory management).
 
 **Когда не использовать:**
-- **Small data** (< 10 MB): overhead zero-copy/off-heap > выигрыш.
+- **Небольшие данные** (< 10 MB): overhead zero-copy/off-heap > выигрыш.
 - **CPU-bound**: zero-copy не помогает (CPU bottleneck).
-- **Simple app**: JVM heap + G1/ZGC достаточно.
+- **Простое приложение**: JVM heap + G1/ZGC достаточно.
 
 ### 27. Как профилировать распределённое приложение (distributed tracing)
 
@@ -1289,7 +1289,7 @@ buf.writeBytes(data);
 
 **Решение: distributed tracing** (OpenTelemetry):
 - **Trace**: один request (A → B → C → D) = один `trace_id`.
-- **Span**: один операция в сервисе (A: `handleRequest`, B: `process`, ...).
+- **Span**: одна операция в сервисе (A: `handleRequest`, B: `process`, ...).
 - **Context propagation**: `trace_id` + `span_id` передаются через headers (HTTP, gRPC, Kafka).
 
 **Instrumentation (OpenTelemetry):**
@@ -1328,7 +1328,7 @@ try (Scope scope = span.makeCurrent()) {
 - **Error rate** (per service): какой сервис падает.
 - **Throughput** (traces/sec): load.
 
-**Follow-up:**
+**Вопросы интервьюера:**
 - «А как sampling?» → **head-based** (10% traces) или **tail-based** (all errors + 1% random).
 - «А как correlation с logs?» → `trace_id` в MDC (logs) → search logs by `trace_id`.
 
@@ -1408,6 +1408,6 @@ public int protobufSerialize(Data d) {
 // Protobuf: 50 bytes, 1 µs (10×)
 ```
 
-**Follow-up:**
+**Вопросы интервьюера:**
 - «А как compression?» → gzip (10:1 для JSON, но CPU overhead). Для 1 KB+ — ок, для 100 bytes — нет.
 - «А как zero-copy?» → Netty `ByteBuf` (не копировать в String).
