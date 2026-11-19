@@ -69,14 +69,14 @@ flowchart LR
 flowchart TD
     subgraph lifecycle [Bean Lifecycle]
         direction TB
-        A[1. Instantiation] --> B[2. Constructor Injection]
-        B --> C[3. Property Population]
-        C --> D[4. Aware interfaces]
-        D --> E[5. BPP before init]
-        E --> F["6. @PostConstruct"]
-        F --> G[7. BPP after init]
-        G --> H[8. Ready for use]
-        H --> I[9. Destruction]
+        A[1. Instantiation] --> B[Constructor Injection]
+        B --> C[2. Property Population]
+        C --> D[3. Aware interfaces]
+        D --> E[4. BPP before init]
+        E --> F["5. @PostConstruct"]
+        F --> G[6. BPP after init]
+        G --> H[7. Ready for use]
+        H --> I[8. Destruction]
     end
     J[Constructor injection — поля final, объект полный сразу]
     K[Setter injection — вызов setter'ов, опциональные зависимости]
@@ -156,60 +156,59 @@ Bean Lifecycle (жизненный цикл бина) — это последо�
 ```mermaid
 %%{init: { 'theme': 'neutral', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#1f2937', 'lineColor': '#6b7280', 'primaryBorderColor': '#d1d5db', 'secondaryColor': '#f3f4f6', 'tertiaryColor': '#e5e7eb' } } }%%
 flowchart TB
-    A[1. Instantiation] --> B[2. Constructor Injection]
-    B --> C["3. Property Population — setter / field injection"]
-    C --> D[4. Aware interfaces — BeanNameAware, ApplicationContextAware]
-    D --> E[5. BeanPostProcessor.postProcessBeforeInitialization]
-    E --> F["6. Initialization — @PostConstruct / afterPropertiesSet / init-method"]
-    F --> G[7. BeanPostProcessor.postProcessAfterInitialization]
-    G --> H[8. Ready for use]
-    H --> I["9. Destruction — @PreDestroy / destroy / destroy-method"]
+    A[1. Instantiation] --> B[Constructor Injection]
+    B --> C["2. Property Population — setter / field injection"]
+    C --> D[3. Aware interfaces — BeanNameAware, ApplicationContextAware]
+    D --> E[4. BeanPostProcessor.postProcessBeforeInitialization]
+    E --> F["5. Initialization — @PostConstruct / afterPropertiesSet / init-method"]
+    F --> G[6. BeanPostProcessor.postProcessAfterInitialization]
+    G --> H[7. Ready for use]
+    H --> I["8. Destruction — @PreDestroy / destroy / destroy-method"]
     classDef n0 fill:#eef4ff,stroke:#93a8d4,stroke-width:2px,color:#1f2937
-    classDef n1 fill:#f0f9ef,stroke:#9dc49a,stroke-width:2px,color:#1f2937
-    classDef n2 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
-    classDef n3 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
-    classDef n4 fill:#d9f99d,stroke:#9dc49a,stroke-width:2px,color:#1f2937
-    classDef n5 fill:#fdeef0,stroke:#d49a9c,stroke-width:2px,color:#1f2937
+    classDef n1 fill:#eaf5fd,stroke:#94bcd8,stroke-width:2px,color:#1f2937
+    classDef n2 fill:#f6eefa,stroke:#bb9ed4,stroke-width:2px,color:#1f2937
+    classDef n3 fill:#d9f99d,stroke:#9dc49a,stroke-width:2px,color:#1f2937
+    classDef n4 fill:#fdeef0,stroke:#d49a9c,stroke-width:2px,color:#1f2937
+    
     class A n0
     class B n1
     class C n2
     class D n3
-    class E n4
-    class F n4
-    class G n4
+    class E n3
+    class F n3
+    class G n3
     class H n4
-    class I n5
 ```
 
 ### 7. Какие этапы жизненного цикла Bean (полное описание)
 
 **1. Instantiation** — контейнер создаёт экземпляр бина. Вызывается конструктор: безаргументный (для setter/field injection) или с аргументами (для constructor injection). На этом этапе объект существует, но зависимости ещё не внедрены (кроме constructor injection).
 
-**2. Constructor Injection** — если зависимости объявлены в параметрах конструктора, Spring передаёт их при создании экземпляра. Поля могут быть `final`. Объект рождается полным: после этого шага все обязательные зависимости уже установлены.
+**Constructor Injection** — если зависимости объявлены в параметрах конструктора, Spring передаёт их при создании экземпляра. Поля могут быть `final`. Объект рождается полным: после этого шага все обязательные зависимости уже установлены.
 
-**3. Property Population** — Spring внедряет зависимости через setter-методы (`@Autowired` на setter) или напрямую в поля (`@Autowired` на поле, через рефлексию). Поля не могут быть `final`. Если constructor injection уже выполнил свою часть, здесь внедряются только оставшиеся (опциональные) зависимости.
+**2. Property Population** — Spring внедряет зависимости через setter-методы (`@Autowired` на setter) или напрямую в поля (`@Autowired` на поле, через рефлексию). Поля не могут быть `final`. Если constructor injection уже выполнил свою часть, здесь внедряются только оставшиеся (опциональные) зависимости.
 
-**4. Aware interfaces** — Spring проверяет, реализует ли бин интерфейсы-«осведомлённые»:
+**3. Aware interfaces** — Spring проверяет, реализует ли бин интерфейсы-«осведомлённые»:
 - `BeanNameAware.setBeanName(String)` — бин узнаёт своё имя в контейнере.
 - `BeanFactoryAware.setBeanFactory(BeanFactory)` — бин получает ссылку на BeanFactory.
 - `ApplicationContextAware.setApplicationContext(ApplicationContext)` — бин получает ссылку на ApplicationContext.
 
 Вызовы выполняются в порядке: BeanNameAware → BeanFactoryAware → ApplicationContextAware.
 
-**5. BeanPostProcessor.postProcessBeforeInitialization()** — вызывается для **каждого** зарегистрированного BeanPostProcessor, до инициализации бина. Здесь могут выполняться кастомные операции (например, `ApplicationContextAwareProcessor` inject'ит `@Autowired` на поля, если это ещё не сделано).
+**4. BeanPostProcessor.postProcessBeforeInitialization()** — вызывается для **каждого** зарегистрированного BeanPostProcessor. На этом этапе работают `AutowiredAnnotationBeanPostProcessor` (обрабатывает @Autowired, @Value), `CommonAnnotationBeanPostProcessor` (обрабатывает @Resource) и другие кастомные постпроцессоры.
 
-**6. Initialization** — собственно инициализация бина. Вызывается **по порядку**:
+**5. Initialization** — собственно инициализация бина. Вызывается **по порядку**:
 1. `@PostConstruct`-аннотированный метод (JSR-250).
 2. `afterPropertiesSet()` — если бин реализует `InitializingBean`.
 3. Custom init-method — метод, указанный в `@Bean(initMethod = "...")` или XML `<bean init-method="...">`.
 
 Используются для загрузки кэша, открытия соединений, проверки конфигурации.
 
-**7. BeanPostProcessor.postProcessAfterInitialization()** — вызывается для **каждого** BeanPostProcessor, после инициализации. Ключевой момент: именно здесь **Spring AOP** оборачивает бин в прокси (если есть `@Transactional`, `@Async`, `@Cacheable` и т.д.). Возвращаемый объект может отличаться от исходного (прокси вместо оригинала).
+**6. BeanPostProcessor.postProcessAfterInitialization()** — вызывается для **каждого** BeanPostProcessor, после инициализации. Ключевой момент: именно здесь **Spring AOP** оборачивает бин в прокси (если есть `@Transactional`, `@Async`, `@Cacheable` и т.д.). Возвращаемый объект может отличаться от исходного (прокси вместо оригинала).
 
-**8. Ready for use** — бин полностью инициализирован и доступен для использования. Контейнер возвращает этот экземпляр при `getBean()`. Для singleton — один экземпляр на весь контекст.
+**7. Ready for use** — бин полностью инициализирован и доступен для использования. Контейнер возвращает этот экземпляр при `getBean()`. Для singleton — один экземпляр на весь контекст.
 
-**9. Destruction** — при закрытии контекста (`context.close()` / shutdown hook):
+**8. Destruction** — при закрытии контекста (`context.close()` / shutdown hook):
 1. `@PreDestroy`-аннотированный метод (JSR-250).
 2. `destroy()` — если бин реализует `DisposableBean`.
 3. Custom destroy-method — `@Bean(destroyMethod = "...")` или XML `<bean destroy-method="...">`.
